@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { calcServe, calcServeRemaining, isDeuce, getWinner, getDeuceResetScore, formatDuration } from './gameLogic'
 import { soundScore, soundDeuce, soundWin, soundUndo, vib, ensureAudio } from './audio'
-import { loadHistory, saveHistory, loadSettings, saveSettings } from './storage'
+import { loadHistory, saveHistory, loadSettings, saveSettings, loadMembers, saveMembers, loadActiveTournament, saveActiveTournament, loadTournamentHistory, saveTournamentHistory } from './storage'
 import { fireConfetti } from './confetti'
+import { createTournament, getNextMatch, processMatchResult, processStandbyPick, calcStandings, calcPlayerStats } from './tournament'
+import { parseSyncHash, clearSyncHash, createSyncUrl, shareSyncUrl, shareResultsImage } from './share'
 
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -14,8 +16,14 @@ const IconNew = () => <svg viewBox="0 0 24 24"><path d="M12 5V1L7 6l5 5V7c3.31 0
 const IconPlus = () => <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>;
 const IconDelete = () => <svg viewBox="0 0 24 24"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>;
 const IconSettings = () => <svg viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>;
+const IconUsers = () => <svg viewBox="0 0 24 24"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>;
+const IconShuffle = () => <svg viewBox="0 0 24 24"><path d="M10.59 9.17L5.41 4 4 5.41l5.17 5.17 1.42-1.41zM14.5 4l2.04 2.04L4 18.59 5.41 20 17.96 7.46 20 9.5V4h-5.5zm.33 9.41l-1.41 1.41 3.13 3.13L14.5 20H20v-5.5l-2.04 2.04-3.13-3.13z"/></svg>;
+const IconTrophy = () => <svg viewBox="0 0 24 24"><path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/></svg>;
+const IconStop = () => <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/></svg>;
+const IconShare = () => <svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>;
 
 export default function App() {
+  // --- Existing game state ---
   const [settings, setSettings] = useState(() => {
     const s = loadSettings();
     return { targetScore: s.targetScore||21, serveInterval: s.serveInterval||2, teamA: s.teamA||'Team A', teamB: s.teamB||'Team B', vibrate: s.vibrate??true, sound: s.sound??true };
@@ -37,10 +45,28 @@ export default function App() {
   const [deuceCount, setDeuceCount] = useState(0);
   const [deuceFlash, setDeuceFlash] = useState(false);
 
+  // --- Teams & Tournament state ---
+  const [members, setMembers] = useState(() => loadMembers());
+  const [memberAvail, setMemberAvail] = useState(() => {
+    const m = loadMembers();
+    const a = {};
+    m.forEach(mb => { a[mb.id] = true; });
+    return a;
+  });
+  const [newMemberName, setNewMemberName] = useState('');
+  const [activeTournament, setActiveTournament] = useState(() => loadActiveTournament());
+  const [tournamentHistory, setTournamentHistory] = useState(() => loadTournamentHistory());
+  const [tournamentMatchId, setTournamentMatchId] = useState(null);
+  const [tournamentTab, setTournamentTab] = useState('history');
+  const [tSetupTarget, setTSetupTarget] = useState(settings.targetScore);
+  const [tSetupServe, setTSetupServe] = useState(settings.serveInterval);
+  const [syncData, setSyncData] = useState(null);
+  const [shareMsg, setShareMsg] = useState(null);
+
   const undoStack = useRef([]);
   const confettiRef = useRef(null);
   const stateRef = useRef();
-  stateRef.current = { scoreA, scoreB, serving, screen, settings, gameId, startedAt, deuceCount };
+  stateRef.current = { scoreA, scoreB, serving, screen, settings, gameId, startedAt, deuceCount, tournamentMatchId };
 
   const winner = getWinner(scoreA, scoreB, settings.targetScore);
   const servesLeft = calcServeRemaining(scoreA, scoreB, settings.targetScore, settings.serveInterval);
@@ -49,21 +75,56 @@ export default function App() {
 
   const screenClass = (name) => {
     if (screen === name) return 'screen';
-    const order = ['setup','history','game','win'];
+    const order = ['setup','teams','tournament','history','game','win'];
     return order.indexOf(name) < order.indexOf(screen) ? 'screen hidden-left' : 'screen hidden';
   };
 
-  const autoSave = useCallback((sA, sB, gId, sAt, w = null, finished = false) => {
+  // --- Computed tournament data ---
+  const nextMatch = useMemo(() => getNextMatch(activeTournament), [activeTournament]);
+
+  const championPair = useMemo(() => {
+    if (!activeTournament?.currentChampion) return null;
+    return activeTournament.pairs.find(p => p.id === activeTournament.currentChampion);
+  }, [activeTournament]);
+
+  const standings = useMemo(() => {
+    if (!activeTournament) return [];
+    return calcStandings(activeTournament.pairs, activeTournament.matches);
+  }, [activeTournament]);
+
+  const allTournaments = useMemo(() => {
+    const list = [...tournamentHistory];
+    if (activeTournament) list.unshift(activeTournament);
+    return list;
+  }, [activeTournament, tournamentHistory]);
+
+  const playerStats = useMemo(() => calcPlayerStats(members, allTournaments), [members, allTournaments]);
+
+  const maxWins = standings.length > 0 ? Math.max(...standings.map(s => s.won), 1) : 1;
+  const availableMembers = members.filter(m => memberAvail[m.id] !== false);
+
+  // --- Confetti on dopamine winner ---
+  const didCelebrate = useRef(null);
+  useEffect(() => {
+    if (screen === 'tournament' && activeTournament?.finishedAt && didCelebrate.current !== activeTournament.id) {
+      didCelebrate.current = activeTournament.id;
+      setTimeout(() => fireConfetti(confettiRef.current), 300);
+    }
+  }, [screen, activeTournament]);
+
+  // --- Auto-save ---
+  const autoSave = useCallback((sA, sB, gId, sAt, w = null, finished = false, dc = null) => {
     if (!gId) return;
     setHistory(prev => {
       const idx = prev.findIndex(h => h.id === gId);
       const s = stateRef.current.settings;
-      const entry = { id: gId, teamA: s.teamA, teamB: s.teamB, scoreA: sA, scoreB: sB, targetScore: s.targetScore, serveInterval: s.serveInterval, deuceCount: stateRef.current.deuceCount, startedAt: sAt, updatedAt: Date.now(), winner: w, finished, ...(finished ? { finishedAt: Date.now() } : {}) };
+      const entry = { id: gId, teamA: s.teamA, teamB: s.teamB, scoreA: sA, scoreB: sB, targetScore: s.targetScore, serveInterval: s.serveInterval, deuceCount: dc !== null ? dc : stateRef.current.deuceCount, startedAt: sAt, updatedAt: Date.now(), winner: w, finished, ...(finished ? { finishedAt: Date.now() } : {}) };
       let next; if (idx >= 0) { next = [...prev]; next[idx] = { ...prev[idx], ...entry }; } else { next = [entry, ...prev]; }
       saveHistory(next); return next;
     });
   }, []);
 
+  // --- Add point ---
   const addPoint = useCallback((team) => {
     const s = stateRef.current;
     if (s.screen !== 'game' || getWinner(s.scoreA, s.scoreB, s.settings.targetScore)) return;
@@ -71,13 +132,14 @@ export default function App() {
     if (undoStack.current.length > 100) undoStack.current.shift();
     let nA = team === 'a' ? s.scoreA+1 : s.scoreA;
     let nB = team === 'b' ? s.scoreB+1 : s.scoreB;
+    let newDc = s.deuceCount;
     if (s.settings.vibrate) vib();
     if (s.settings.sound) soundScore();
     setBumpTeam(team); setTimeout(() => setBumpTeam(null), 300);
     const w = getWinner(nA, nB, s.settings.targetScore);
     if (isDeuce(nA, nB, s.settings.targetScore)) {
       const resetScore = getDeuceResetScore(s.settings.targetScore);
-      const newDc = s.deuceCount + 1;
+      newDc = s.deuceCount + 1;
       setDeuceCount(newDc);
       setDeuceFlash(true); setTimeout(() => setDeuceFlash(false), 1500);
       nA = resetScore; nB = resetScore;
@@ -85,42 +147,176 @@ export default function App() {
     }
     const nServe = calcServe(nA, nB, s.settings.targetScore, s.settings.serveInterval);
     setScoreA(nA); setScoreB(nB); setServing(nServe);
-    autoSave(nA, nB, s.gameId, s.startedAt, w, !!w);
+    // Eagerly update stateRef so rapid taps see new state
+    stateRef.current = { ...s, scoreA: nA, scoreB: nB, serving: nServe, deuceCount: newDc };
+    autoSave(nA, nB, s.gameId, s.startedAt, w, !!w, newDc);
+    if (w && s.tournamentMatchId) {
+      setActiveTournament(prev => {
+        const updated = processMatchResult(prev, s.gameId, nA, nB, w, newDc);
+        saveActiveTournament(updated);
+        return updated;
+      });
+    }
     if (w) setTimeout(() => { if (s.settings.sound) soundWin(); if (s.settings.vibrate) vib([50,50,50,50,100]); goTo('win'); fireConfetti(confettiRef.current); }, 500);
   }, [autoSave, goTo]);
 
+  // --- Undo ---
   const undo = useCallback(() => {
     if (!undoStack.current.length) return;
+    const s = stateRef.current;
+    if (getWinner(s.scoreA, s.scoreB, s.settings.targetScore)) return;
     const prev = undoStack.current.pop();
     setScoreA(prev.scoreA); setScoreB(prev.scoreB); setServing(prev.serving);
     if (prev.deuceCount !== undefined) setDeuceCount(prev.deuceCount);
-    const s = stateRef.current;
     if (s.settings.vibrate) vib(8);
     if (s.settings.sound) soundUndo();
     autoSave(prev.scoreA, prev.scoreB, s.gameId, s.startedAt);
   }, [autoSave]);
 
+  // --- Start a regular game ---
   const startGame = useCallback((target, serve, nameA, nameB) => {
     const ns = { ...stateRef.current.settings, targetScore: target, serveInterval: serve, teamA: nameA, teamB: nameB };
     setSettings(ns); saveSettings(ns);
     setScoreA(0); setScoreB(0); setServing('a'); setGameId(genId()); setStartedAt(Date.now()); setDeuceCount(0);
+    setTournamentMatchId(null);
     undoStack.current = []; goTo('game');
   }, [goTo]);
 
+  // --- Continue a game from history ---
   const continueGame = useCallback((g) => {
     const ns = { ...stateRef.current.settings, targetScore: g.targetScore, serveInterval: g.serveInterval||2, teamA: g.teamA, teamB: g.teamB };
     setSettings(ns); saveSettings(ns);
     setScoreA(g.scoreA); setScoreB(g.scoreB); setServing(calcServe(g.scoreA, g.scoreB, g.targetScore, g.serveInterval||2));
-    setGameId(g.id); setStartedAt(g.startedAt); setDeuceCount(g.deuceCount||0); undoStack.current = []; goTo('game');
+    setGameId(g.id); setStartedAt(g.startedAt); setDeuceCount(g.deuceCount||0);
+    setTournamentMatchId(null);
+    undoStack.current = []; goTo('game');
   }, [goTo]);
 
   const deleteGame = useCallback((id) => { setHistory(prev => { const n = prev.filter(h => h.id !== id); saveHistory(n); return n; }); }, []);
 
   const goSetup = useCallback(() => {
     const s = stateRef.current.settings;
-    setSetupTarget(s.targetScore); setSetupServe(s.serveInterval); setSetupNameA(s.teamA); setSetupNameB(s.teamB); goTo('setup');
+    setSetupTarget(s.targetScore); setSetupServe(s.serveInterval); setSetupNameA('Team A'); setSetupNameB('Team B'); goTo('setup');
   }, [goTo]);
 
+  // --- Member management ---
+  const addMember = useCallback(() => {
+    const name = newMemberName.trim();
+    if (!name) return;
+    const id = genId();
+    setMembers(prev => { const n = [...prev, { id, name }]; saveMembers(n); return n; });
+    setMemberAvail(prev => ({ ...prev, [id]: true }));
+    setNewMemberName('');
+  }, [newMemberName]);
+
+  const deleteMember = useCallback((id) => {
+    setMembers(prev => { const n = prev.filter(m => m.id !== id); saveMembers(n); return n; });
+    setMemberAvail(prev => { const n = { ...prev }; delete n[id]; return n; });
+  }, []);
+
+  const toggleAvail = useCallback((id) => {
+    if (activeTournament && !activeTournament.finishedAt) return;
+    setMemberAvail(prev => ({ ...prev, [id]: !prev[id] }));
+  }, [activeTournament]);
+
+  // --- Generate pairs & start tournament ---
+  const generateAndStart = useCallback(() => {
+    if (availableMembers.length < 4) return;
+    const t = createTournament(availableMembers, tSetupTarget, tSetupServe);
+    setActiveTournament(t);
+    saveActiveTournament(t);
+    setTournamentTab('history');
+    didCelebrate.current = null;
+    goTo('tournament');
+  }, [availableMembers, tSetupTarget, tSetupServe, goTo]);
+
+  // --- Play the next tournament match ---
+  const playNextMatch = useCallback(() => {
+    if (!activeTournament || activeTournament.pendingPick || activeTournament.finishedAt) return;
+    const nm = getNextMatch(activeTournament);
+    if (!nm) return;
+    const ns = { ...stateRef.current.settings, targetScore: activeTournament.targetScore, serveInterval: activeTournament.serveInterval, teamA: nm.pairA.name, teamB: nm.pairB.name };
+    setSettings(ns); saveSettings(ns);
+    setScoreA(0); setScoreB(0); setServing('a'); setGameId(genId()); setStartedAt(Date.now()); setDeuceCount(0);
+    setTournamentMatchId(genId());
+    undoStack.current = []; goTo('game');
+  }, [activeTournament, goTo]);
+
+  // --- Standby player picks from loser ---
+  const handleStandbyPick = useCallback((pickedPlayerId) => {
+    setActiveTournament(prev => {
+      const updated = processStandbyPick(prev, pickedPlayerId);
+      saveActiveTournament(updated);
+      return updated;
+    });
+  }, []);
+
+  // --- Back to tournament from win screen ---
+  const backToTournament = useCallback(() => {
+    setTournamentMatchId(null);
+    goTo('tournament');
+  }, [goTo]);
+
+  // --- End tournament (crown dopamine winner) ---
+  const endTournament = useCallback(() => {
+    setActiveTournament(prev => {
+      if (!prev || !prev.currentChampion) return prev;
+      const finished = { ...prev, finishedAt: Date.now(), pendingPick: null };
+      saveActiveTournament(finished);
+      return finished;
+    });
+  }, []);
+
+  // --- Archive finished tournament & start fresh ---
+  const finishAndArchive = useCallback(() => {
+    setActiveTournament(prev => {
+      if (!prev) return null;
+      const finished = { ...prev, finishedAt: prev.finishedAt || Date.now() };
+      setTournamentHistory(h => { const n = [finished, ...h]; saveTournamentHistory(n); return n; });
+      saveActiveTournament(null);
+      return null;
+    });
+    didCelebrate.current = null;
+    goTo('teams');
+  }, [goTo]);
+
+  // --- Discard active tournament ---
+  const discardTournament = useCallback(() => {
+    setActiveTournament(null);
+    saveActiveTournament(null);
+    didCelebrate.current = null;
+    goTo('teams');
+  }, [goTo]);
+
+  // --- Sync: detect URL hash on mount ---
+  useEffect(() => {
+    const data = parseSyncHash();
+    if (data && data.t) { setSyncData(data); clearSyncHash(); }
+  }, []);
+
+  const handleSyncImport = useCallback(() => {
+    if (!syncData) return;
+    if (syncData.m) { setMembers(syncData.m); saveMembers(syncData.m); const a = {}; syncData.m.forEach(mb => { a[mb.id] = true; }); setMemberAvail(a); }
+    if (syncData.t) { setActiveTournament(syncData.t); saveActiveTournament(syncData.t); }
+    setSyncData(null);
+    goTo('tournament');
+  }, [syncData, goTo]);
+
+  // --- Share handlers ---
+  const handleShareSync = useCallback(async () => {
+    if (!activeTournament) return;
+    const url = createSyncUrl(activeTournament, members);
+    const result = await shareSyncUrl(url);
+    if (result === 'copied') { setShareMsg('Link copied!'); setTimeout(() => setShareMsg(null), 2000); }
+  }, [activeTournament, members]);
+
+  const handleShareResults = useCallback(async () => {
+    if (!activeTournament) return;
+    const result = await shareResultsImage(activeTournament, standings, championPair);
+    if (result === 'downloaded') { setShareMsg('Image saved!'); setTimeout(() => setShareMsg(null), 2000); }
+  }, [activeTournament, standings, championPair]);
+
+  // --- Key handlers & wake lock ---
   useEffect(() => {
     const handler = (e) => {
       if (stateRef.current.screen !== 'game') return;
@@ -176,7 +372,268 @@ export default function App() {
             </div>
           </div>
           <button className="btn btn-start" onClick={() => startGame(setupTarget, setupServe, setupNameA.trim()||'Team A', setupNameB.trim()||'Team B')}><IconPlay/> Start Game</button>
-          <button className="btn btn-ghost btn-history-link" onClick={() => goTo('history')}><IconHistory/> Game History</button>
+          <div className="setup-links">
+            <button className="btn btn-ghost btn-history-link" onClick={() => goTo('teams')}><IconUsers/> Teams</button>
+            <button className="btn btn-ghost btn-history-link" onClick={() => goTo('history')}><IconHistory/> History</button>
+          </div>
+        </div>
+      </div>
+
+      {/* TEAMS */}
+      <div className={`${screenClass('teams')} teams-screen`}>
+        <div className="teams-header">
+          <button className="btn btn-ghost" onClick={() => goTo('setup')}><IconBack/> Back</button>
+          <h2>Teams</h2>
+          <div style={{width:40}}/>
+        </div>
+
+        <div className="teams-body">
+          <div className="teams-add">
+            <input
+              className="teams-add-input"
+              value={newMemberName}
+              onChange={e => setNewMemberName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && addMember()}
+              maxLength={12}
+              placeholder="Player name"
+            />
+            <button className="btn btn-primary teams-add-btn" onClick={addMember}><IconPlus/></button>
+          </div>
+
+          <div className="teams-list">
+            {members.length === 0 ? (
+              <div className="teams-empty">Add players to get started</div>
+            ) : members.map((m, i) => (
+              <div key={m.id} className={`member-card ${memberAvail[m.id] !== false ? '' : 'unavailable'}`} style={{animationDelay:`${i*.04}s`}}>
+                <div className={`member-check ${memberAvail[m.id] !== false ? 'checked' : ''}`} onClick={() => toggleAvail(m.id)}>
+                  {memberAvail[m.id] !== false && <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>}
+                </div>
+                <span className="member-name">{m.name}</span>
+                <button className="btn btn-delete-sm" onClick={() => deleteMember(m.id)}><IconDelete/></button>
+              </div>
+            ))}
+          </div>
+
+          {members.length >= 4 && (
+            <div className="t-setup-section">
+              <label className="setup-label">Tournament Settings</label>
+              <div className="t-setup-row">
+                <div className="pill-group">
+                  {[11,21].map(v => <button key={v} className={`pill pill-sm ${tSetupTarget===v?'active':''}`} onClick={() => setTSetupTarget(v)}>{v} pts</button>)}
+                </div>
+                <div className="pill-group">
+                  {[2,5].map(v => <button key={v} className={`pill pill-sm ${tSetupServe===v?'active':''}`} onClick={() => setTSetupServe(v)}>Serve {v}</button>)}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {playerStats.length > 0 && (
+            <div className="player-stats-section">
+              <label className="setup-label">Player Stats</label>
+              {playerStats.map((ps, i) => (
+                <div key={ps.id} className="player-stat-row">
+                  <span className="player-rank">#{i+1}</span>
+                  <span className="player-stat-name">{ps.name}</span>
+                  <div className="player-stat-nums">
+                    <span className="stat-w">{ps.won}W</span>
+                    <span className="stat-l">{ps.lost}L</span>
+                    {ps.tournamentWins > 0 && <span className="stat-trophy">{ps.tournamentWins}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="teams-footer">
+          <div className="teams-avail">{availableMembers.length} of {members.length} available</div>
+          {activeTournament && !activeTournament.finishedAt ? (
+            <button className="btn btn-primary teams-go-btn" onClick={() => goTo('tournament')}>
+              <IconTrophy/> Continue Tournament
+            </button>
+          ) : (
+            <button className="btn btn-primary teams-go-btn" onClick={generateAndStart} disabled={availableMembers.length < 4}>
+              <IconShuffle/> Generate Pairs & Play
+            </button>
+          )}
+          {availableMembers.length < 4 && !(activeTournament && !activeTournament.finishedAt) && (
+            <div className="teams-hint">Need at least 4 available players</div>
+          )}
+        </div>
+      </div>
+
+      {/* TOURNAMENT */}
+      <div className={`${screenClass('tournament')} tournament-screen`}>
+        <div className="tournament-header">
+          <button className="btn btn-ghost" onClick={() => goTo('teams')}><IconBack/> Back</button>
+          <h2>Tournament</h2>
+          <button className="btn btn-ghost" onClick={activeTournament?.finishedAt ? handleShareResults : handleShareSync}><IconShare/></button>
+        </div>
+        {shareMsg && <div className="share-toast">{shareMsg}</div>}
+
+        <div className="tournament-body">
+          {/* Dopamine Winner */}
+          {activeTournament?.finishedAt && championPair && (
+            <div className="dopamine-winner">
+              <div className="dw-trophy">&#x1F3C6;</div>
+              <div className="dw-label">DOPAMINE WINNER</div>
+              <div className="dw-team">{championPair.name}</div>
+            </div>
+          )}
+
+          {/* Current Champion */}
+          {championPair && !activeTournament?.finishedAt && (
+            <div className="champion-banner">
+              <span className="champion-crown">&#x1F451;</span>
+              <div className="champion-info">
+                <span className="champion-label">Champion</span>
+                <span className="champion-name">{championPair.name}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Standby Pick */}
+          {activeTournament?.pendingPick && (() => {
+            const { standbyPlayer, losingPairId } = activeTournament.pendingPick;
+            const losingPair = activeTournament.pairs.find(p => p.id === losingPairId);
+            if (!losingPair) return null;
+            return (
+              <div className="pick-card">
+                <div className="pick-icon">&#x1F504;</div>
+                <div className="pick-title">{standbyPlayer.name}, pick your partner</div>
+                <div className="pick-subtitle">Choose from the losing team</div>
+                <div className="pick-options">
+                  {losingPair.players.map(pl => (
+                    <button key={pl.id} className="btn btn-pick" onClick={() => handleStandbyPick(pl.id)}>
+                      {pl.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Next Match */}
+          {nextMatch && !activeTournament?.pendingPick && !activeTournament?.finishedAt && (
+            <div className="next-match-card">
+              <div className="nm-label">{activeTournament?.currentChampion ? 'Next Match' : 'First Match'}</div>
+              <div className="nm-teams">
+                <div className="nm-team">
+                  <span className="nm-name">{nextMatch.pairA.name}</span>
+                  {activeTournament?.currentChampion === nextMatch.pairA.id && <span className="nm-badge">Champ</span>}
+                </div>
+                <span className="nm-vs">VS</span>
+                <div className="nm-team">
+                  <span className="nm-name">{nextMatch.pairB.name}</span>
+                  {activeTournament?.currentChampion === nextMatch.pairB.id && <span className="nm-badge">Champ</span>}
+                </div>
+              </div>
+              <button className="btn btn-play-match" onClick={playNextMatch}><IconPlay/> Play Match</button>
+            </div>
+          )}
+
+          {/* Queue + Standby */}
+          {activeTournament && !activeTournament.finishedAt && (activeTournament.queue.length > 0 || activeTournament.standby) && (
+            <div className="queue-section">
+              <label className="setup-label">Waiting</label>
+              <div className="queue-chips">
+                {activeTournament.queue.map(qid => {
+                  const p = activeTournament.pairs.find(pp => pp.id === qid);
+                  return p ? <div key={qid} className="queue-chip">{p.name}</div> : null;
+                })}
+                {activeTournament.standby && !activeTournament.pendingPick && (
+                  <div className="queue-chip standby-chip">Standby: {activeTournament.standby.name}</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Tabs */}
+          {activeTournament && activeTournament.matches.length > 0 && (
+            <>
+              <div className="tab-bar-inline">
+                <button className={`tab ${tournamentTab==='history'?'active':''}`} onClick={() => setTournamentTab('history')}>Matches</button>
+                <button className={`tab ${tournamentTab==='standings'?'active':''}`} onClick={() => setTournamentTab('standings')}>Standings</button>
+              </div>
+
+              {tournamentTab === 'history' && (
+                <div className="match-history-list">
+                  {[...activeTournament.matches].reverse().map((m, i) => {
+                    const pA = activeTournament.pairs.find(p => p.id === m.pairAId);
+                    const pB = activeTournament.pairs.find(p => p.id === m.pairBId);
+                    return (
+                      <div key={m.id} className="match-card done" style={{animationDelay:`${i*.04}s`}}>
+                        <div className="match-num">Match {activeTournament.matches.length - i}</div>
+                        <div className="match-teams">
+                          <div className={`match-team ${m.winner===m.pairAId?'winner':''}`}>
+                            <span className="match-team-name">{pA?.name || '?'}</span>
+                            <span className="match-team-score">{m.scoreA}</span>
+                          </div>
+                          <span className="match-vs">VS</span>
+                          <div className={`match-team ${m.winner===m.pairBId?'winner':''}`}>
+                            <span className="match-team-name">{pB?.name || '?'}</span>
+                            <span className="match-team-score">{m.scoreB}</span>
+                          </div>
+                        </div>
+                        {m.deuceCount > 0 && <div className="match-deuce">{m.deuceCount} deuce{m.deuceCount>1?'s':''}</div>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {tournamentTab === 'standings' && (
+                <div className="standings-wrap">
+                  <table className="standings-table">
+                    <thead>
+                      <tr><th>#</th><th className="st-team">Team</th><th>P</th><th>W</th><th>L</th><th>PF</th><th>PA</th><th>+/-</th></tr>
+                    </thead>
+                    <tbody>
+                      {standings.map((s, i) => (
+                        <tr key={s.pairId} className={i===0 && s.won > 0 ?'top-row':''}>
+                          <td className="st-rank">{i+1}</td>
+                          <td className="st-team">{s.name}</td>
+                          <td>{s.played}</td>
+                          <td className="st-w">{s.won}</td>
+                          <td className="st-l">{s.lost}</td>
+                          <td>{s.pf}</td>
+                          <td>{s.pa}</td>
+                          <td className={s.pf-s.pa>0?'st-pos':s.pf-s.pa<0?'st-neg':''}>{s.pf-s.pa>0?'+':''}{s.pf-s.pa}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+
+                  <div className="chart-section">
+                    <label className="setup-label">Wins</label>
+                    {standings.map(s => (
+                      <div key={s.pairId} className="chart-row">
+                        <span className="chart-label">{s.name}</span>
+                        <div className="chart-bar-bg">
+                          <div className="chart-bar" style={{width: `${(s.won/maxWins)*100}%`}}/>
+                        </div>
+                        <span className="chart-value">{s.won}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="tournament-footer">
+          {activeTournament?.finishedAt ? (
+            <button className="btn btn-primary tournament-foot-btn" onClick={finishAndArchive}><IconShuffle/> New Tournament</button>
+          ) : (
+            <div className="tournament-foot-row">
+              <button className="btn btn-ghost tournament-foot-btn" onClick={discardTournament}><IconDelete/> Discard</button>
+              {activeTournament?.matches.length > 0 && (
+                <button className="btn btn-primary tournament-foot-btn" onClick={endTournament}><IconStop/> End &amp; Crown</button>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -216,7 +673,11 @@ export default function App() {
         <div className="win-score"><span className="wa">{scoreA}</span> <span style={{color:'var(--dim)'}}>-</span> <span className="wb">{scoreB}</span></div>
         <div className="win-details">Total Points: {scoreA+scoreB}{deuceCount > 0 && <><br/>Deuces: {deuceCount}</>}<br/>Duration: {startedAt?formatDuration(Date.now()-startedAt):'\u2014'}</div>
         <div className="win-actions">
-          <button className="btn btn-primary" onClick={goSetup}><IconNew/> New Game</button>
+          {tournamentMatchId ? (
+            <button className="btn btn-primary" onClick={backToTournament}><IconTrophy/> Back to Tournament</button>
+          ) : (
+            <button className="btn btn-primary" onClick={goSetup}><IconNew/> New Game</button>
+          )}
           <button className="btn btn-outline" onClick={() => goTo('history')}><IconHistory/> View History</button>
         </div>
       </div>
@@ -224,7 +685,7 @@ export default function App() {
       {/* HISTORY */}
       <div className={`${screenClass('history')} history-screen`}>
         <div className="history-header">
-          <button className="btn btn-ghost" onClick={() => goTo(prevScreen==='win'||prevScreen==='game'?prevScreen:'setup')}><IconBack/> Back</button>
+          <button className="btn btn-ghost" onClick={() => goTo(prevScreen==='win'||prevScreen==='game'?prevScreen:prevScreen==='tournament'?'tournament':'setup')}><IconBack/> Back</button>
           <h2>Game History</h2>
           <button className="btn btn-ghost" onClick={() => setShowSettings(true)}><IconSettings/></button>
         </div>
@@ -273,6 +734,23 @@ export default function App() {
             <div className={`toggle ${settings.sound?'on':''}`} onClick={() => { const n={...settings,sound:!settings.sound}; setSettings(n); saveSettings(n); }}/>
           </div>
           <button className="btn btn-primary" style={{width:'100%',justifyContent:'center',marginTop:20,padding:14,fontSize:15}} onClick={() => setShowSettings(false)}>Done</button>
+        </div>
+      </div>
+
+      {/* SYNC MODAL */}
+      <div className={`modal-overlay ${syncData?'show':''}`} onClick={e => { if (e.target===e.currentTarget) setSyncData(null); }}>
+        <div className="modal">
+          <div className="modal-handle"/>
+          <h3>Sync Tournament Scores?</h3>
+          <div className="sync-info">
+            <div className="sync-detail">Someone shared a tournament with you</div>
+            {syncData?.t && <div className="sync-detail">{syncData.t.matches?.length || 0} matches played &bull; {syncData.t.pairs?.length || 0} teams</div>}
+            {syncData?.t?.finishedAt && <div className="sync-detail sync-finished">Tournament finished</div>}
+          </div>
+          <div className="sync-actions">
+            <button className="btn btn-primary" style={{flex:1,justifyContent:'center',padding:14,fontSize:15}} onClick={handleSyncImport}>Import & View</button>
+            <button className="btn btn-outline" style={{flex:1,justifyContent:'center',padding:14,fontSize:15}} onClick={() => setSyncData(null)}>Cancel</button>
+          </div>
         </div>
       </div>
 
