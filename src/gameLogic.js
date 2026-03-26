@@ -20,6 +20,12 @@ export function getWinner(scoreA, scoreB, targetScore) {
   return null;
 }
 
+export function getDeuceResetScore(targetScore) {
+  if (targetScore === 21) return 15;
+  if (targetScore === 11) return 7;
+  return Math.floor(targetScore * 0.7);
+}
+
 export function formatDuration(ms) {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;

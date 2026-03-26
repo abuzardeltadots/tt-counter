@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { calcServe, calcServeRemaining, isDeuce, getWinner, formatDuration } from './gameLogic'
+import { calcServe, calcServeRemaining, isDeuce, getWinner, getDeuceResetScore, formatDuration } from './gameLogic'
 import { soundScore, soundDeuce, soundWin, soundUndo, vib, ensureAudio } from './audio'
 import { loadHistory, saveHistory, loadSettings, saveSettings } from './storage'
 import { fireConfetti } from './confetti'
@@ -34,14 +34,15 @@ export default function App() {
   const [setupServe, setSetupServe] = useState(settings.serveInterval);
   const [setupNameA, setSetupNameA] = useState(settings.teamA);
   const [setupNameB, setSetupNameB] = useState(settings.teamB);
+  const [deuceCount, setDeuceCount] = useState(0);
+  const [deuceFlash, setDeuceFlash] = useState(false);
 
   const undoStack = useRef([]);
   const confettiRef = useRef(null);
   const stateRef = useRef();
-  stateRef.current = { scoreA, scoreB, serving, screen, settings, gameId, startedAt };
+  stateRef.current = { scoreA, scoreB, serving, screen, settings, gameId, startedAt, deuceCount };
 
   const winner = getWinner(scoreA, scoreB, settings.targetScore);
-  const deuce = isDeuce(scoreA, scoreB, settings.targetScore);
   const servesLeft = calcServeRemaining(scoreA, scoreB, settings.targetScore, settings.serveInterval);
 
   const goTo = useCallback((next) => { setScreen(prev => { setPrevScreen(prev); return next; }); }, []);
@@ -57,7 +58,7 @@ export default function App() {
     setHistory(prev => {
       const idx = prev.findIndex(h => h.id === gId);
       const s = stateRef.current.settings;
-      const entry = { id: gId, teamA: s.teamA, teamB: s.teamB, scoreA: sA, scoreB: sB, targetScore: s.targetScore, serveInterval: s.serveInterval, startedAt: sAt, updatedAt: Date.now(), winner: w, finished, ...(finished ? { finishedAt: Date.now() } : {}) };
+      const entry = { id: gId, teamA: s.teamA, teamB: s.teamB, scoreA: sA, scoreB: sB, targetScore: s.targetScore, serveInterval: s.serveInterval, deuceCount: stateRef.current.deuceCount, startedAt: sAt, updatedAt: Date.now(), winner: w, finished, ...(finished ? { finishedAt: Date.now() } : {}) };
       let next; if (idx >= 0) { next = [...prev]; next[idx] = { ...prev[idx], ...entry }; } else { next = [entry, ...prev]; }
       saveHistory(next); return next;
     });
@@ -66,18 +67,25 @@ export default function App() {
   const addPoint = useCallback((team) => {
     const s = stateRef.current;
     if (s.screen !== 'game' || getWinner(s.scoreA, s.scoreB, s.settings.targetScore)) return;
-    undoStack.current.push({ scoreA: s.scoreA, scoreB: s.scoreB, serving: s.serving });
+    undoStack.current.push({ scoreA: s.scoreA, scoreB: s.scoreB, serving: s.serving, deuceCount: s.deuceCount });
     if (undoStack.current.length > 100) undoStack.current.shift();
-    const nA = team === 'a' ? s.scoreA+1 : s.scoreA;
-    const nB = team === 'b' ? s.scoreB+1 : s.scoreB;
-    const nServe = calcServe(nA, nB, s.settings.targetScore, s.settings.serveInterval);
-    setScoreA(nA); setScoreB(nB); setServing(nServe);
+    let nA = team === 'a' ? s.scoreA+1 : s.scoreA;
+    let nB = team === 'b' ? s.scoreB+1 : s.scoreB;
     if (s.settings.vibrate) vib();
     if (s.settings.sound) soundScore();
     setBumpTeam(team); setTimeout(() => setBumpTeam(null), 300);
     const w = getWinner(nA, nB, s.settings.targetScore);
+    if (isDeuce(nA, nB, s.settings.targetScore)) {
+      const resetScore = getDeuceResetScore(s.settings.targetScore);
+      const newDc = s.deuceCount + 1;
+      setDeuceCount(newDc);
+      setDeuceFlash(true); setTimeout(() => setDeuceFlash(false), 1500);
+      nA = resetScore; nB = resetScore;
+      setTimeout(() => { if (s.settings.sound) soundDeuce(); if (s.settings.vibrate) vib(30); }, 200);
+    }
+    const nServe = calcServe(nA, nB, s.settings.targetScore, s.settings.serveInterval);
+    setScoreA(nA); setScoreB(nB); setServing(nServe);
     autoSave(nA, nB, s.gameId, s.startedAt, w, !!w);
-    if (isDeuce(nA, nB, s.settings.targetScore)) setTimeout(() => { if (s.settings.sound) soundDeuce(); if (s.settings.vibrate) vib(30); }, 200);
     if (w) setTimeout(() => { if (s.settings.sound) soundWin(); if (s.settings.vibrate) vib([50,50,50,50,100]); goTo('win'); fireConfetti(confettiRef.current); }, 500);
   }, [autoSave, goTo]);
 
@@ -85,6 +93,7 @@ export default function App() {
     if (!undoStack.current.length) return;
     const prev = undoStack.current.pop();
     setScoreA(prev.scoreA); setScoreB(prev.scoreB); setServing(prev.serving);
+    if (prev.deuceCount !== undefined) setDeuceCount(prev.deuceCount);
     const s = stateRef.current;
     if (s.settings.vibrate) vib(8);
     if (s.settings.sound) soundUndo();
@@ -94,7 +103,7 @@ export default function App() {
   const startGame = useCallback((target, serve, nameA, nameB) => {
     const ns = { ...stateRef.current.settings, targetScore: target, serveInterval: serve, teamA: nameA, teamB: nameB };
     setSettings(ns); saveSettings(ns);
-    setScoreA(0); setScoreB(0); setServing('a'); setGameId(genId()); setStartedAt(Date.now());
+    setScoreA(0); setScoreB(0); setServing('a'); setGameId(genId()); setStartedAt(Date.now()); setDeuceCount(0);
     undoStack.current = []; goTo('game');
   }, [goTo]);
 
@@ -102,7 +111,7 @@ export default function App() {
     const ns = { ...stateRef.current.settings, targetScore: g.targetScore, serveInterval: g.serveInterval||2, teamA: g.teamA, teamB: g.teamB };
     setSettings(ns); saveSettings(ns);
     setScoreA(g.scoreA); setScoreB(g.scoreB); setServing(calcServe(g.scoreA, g.scoreB, g.targetScore, g.serveInterval||2));
-    setGameId(g.id); setStartedAt(g.startedAt); undoStack.current = []; goTo('game');
+    setGameId(g.id); setStartedAt(g.startedAt); setDeuceCount(g.deuceCount||0); undoStack.current = []; goTo('game');
   }, [goTo]);
 
   const deleteGame = useCallback((id) => { setHistory(prev => { const n = prev.filter(h => h.id !== id); saveHistory(n); return n; }); }, []);
@@ -183,7 +192,7 @@ export default function App() {
             </div>
           </div>
           <div className="divider"><div className="vs-badge">VS</div></div>
-          <div className={`deuce-banner ${deuce?'show':''}`}>DEUCE!</div>
+          <div className={`deuce-banner ${deuceFlash?'show':''}`}>DEUCE!{deuceCount > 0 ? ` (${deuceCount})` : ''}</div>
           <div className="team-panel team-b" onClick={() => addPoint('b')}>
             <div className={`serve-indicator ${serving==='b'?'active':''}`}><div className="serve-dot"/><span className="serve-count">{serving==='b'?`${servesLeft} left`:''}</span></div>
             <div className="team-content">
@@ -195,7 +204,7 @@ export default function App() {
         </div>
         <div className="bottom-bar">
           <button className="btn btn-ghost" onClick={undo}><IconUndo/> Undo</button>
-          <div className="game-info"><span>{settings.targetScore}</span> pts &bull; serve every <span>{settings.serveInterval}</span></div>
+          <div className="game-info"><span>{settings.targetScore}</span> pts &bull; serve every <span>{settings.serveInterval}</span>{deuceCount > 0 && <> &bull; Deuce: {deuceCount}</>}</div>
           <button className="btn btn-ghost" onClick={() => goTo('history')}><IconHistory/> History</button>
         </div>
       </div>
@@ -205,7 +214,7 @@ export default function App() {
         <div className="win-crown">{'\u{1F451}'}</div>
         <div className={`win-title winner-${winner||'a'}`}>{winner==='a'?settings.teamA:settings.teamB} Wins!</div>
         <div className="win-score"><span className="wa">{scoreA}</span> <span style={{color:'var(--dim)'}}>-</span> <span className="wb">{scoreB}</span></div>
-        <div className="win-details">Total Points: {scoreA+scoreB}<br/>Duration: {startedAt?formatDuration(Date.now()-startedAt):'\u2014'}</div>
+        <div className="win-details">Total Points: {scoreA+scoreB}{deuceCount > 0 && <><br/>Deuces: {deuceCount}</>}<br/>Duration: {startedAt?formatDuration(Date.now()-startedAt):'\u2014'}</div>
         <div className="win-actions">
           <button className="btn btn-primary" onClick={goSetup}><IconNew/> New Game</button>
           <button className="btn btn-outline" onClick={() => goTo('history')}><IconHistory/> View History</button>
@@ -237,7 +246,7 @@ export default function App() {
                 <span className="game-card-vs">VS</span>
                 <div className={`game-card-team b ${g.winner==='b'?'winner':''}`}><span className="game-card-team-label">{g.teamB}{g.winner==='b'?' \u2605':''}</span><span className="game-card-team-score">{g.scoreB}</span></div>
               </div>
-              <div className="game-card-mode">{g.targetScore||'?'} pts &bull; serve every {g.serveInterval||'?'}</div>
+              <div className="game-card-mode">{g.targetScore||'?'} pts &bull; serve every {g.serveInterval||'?'}{g.deuceCount > 0 && <> &bull; Deuces: {g.deuceCount}</>}</div>
               <div className="game-card-actions">
                 {!g.finished && <button className="btn btn-continue" onClick={() => continueGame(g)}>Continue from here</button>}
                 <button className="btn btn-delete" onClick={e => { e.stopPropagation(); deleteGame(g.id); }}><IconDelete/></button>
