@@ -1,1 +1,3 @@
-node_modules\ndist\n.vercel
+node_modules
+dist
+.vercel
