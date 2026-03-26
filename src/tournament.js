@@ -18,16 +18,42 @@ export function generatePairs(availableMembers) {
   return { pairs, standby };
 }
 
-export function createTournament(availableMembers, targetScore, serveInterval) {
-  const { pairs, standby } = generatePairs(availableMembers);
+export function createTournament(availableMembers, targetScore, serveInterval, balancedPairsFn) {
+  const result = balancedPairsFn
+    ? (() => { const { pairs: bp, standby } = balancedPairsFn(availableMembers); return { pairs: bp.map(([a, b]) => ({ id: genId(), players: [a, b], name: `${a.name} & ${b.name}` })), standby }; })()
+    : generatePairs(availableMembers);
   return {
     id: genId(),
-    pairs: [...pairs],
+    format: 'koth',
+    pairs: [...result.pairs],
     matches: [],
-    queue: pairs.slice(2).map(p => p.id),
+    queue: result.pairs.slice(2).map(p => p.id),
     currentChampion: null,
-    standby,
+    standby: result.standby,
     pendingPick: null,
+    targetScore,
+    serveInterval,
+    createdAt: Date.now(),
+    finishedAt: null
+  };
+}
+
+export function createRoundRobinTournament(availableMembers, targetScore, serveInterval, balancedPairsFn) {
+  const result = balancedPairsFn
+    ? (() => { const { pairs: bp, standby } = balancedPairsFn(availableMembers); return { pairs: bp.map(([a, b]) => ({ id: genId(), players: [a, b], name: `${a.name} & ${b.name}` })), standby }; })()
+    : generatePairs(availableMembers);
+  const matches = [];
+  for (let i = 0; i < result.pairs.length; i++) {
+    for (let j = i + 1; j < result.pairs.length; j++) {
+      matches.push({ id: genId(), pairAId: result.pairs[i].id, pairBId: result.pairs[j].id, scoreA: 0, scoreB: 0, finished: false, winner: null, deuceCount: 0 });
+    }
+  }
+  return {
+    id: genId(),
+    format: 'roundrobin',
+    pairs: [...result.pairs],
+    matches,
+    bye: result.standby,
     targetScore,
     serveInterval,
     createdAt: Date.now(),
@@ -172,8 +198,14 @@ export function calcPlayerStats(members, tournaments) {
     });
 
     // Dopamine winner credit
-    if (t.finishedAt && t.currentChampion) {
-      const champPair = t.pairs.find(p => p.id === t.currentChampion);
+    if (t.finishedAt) {
+      let champPair = null;
+      if (t.currentChampion) {
+        champPair = t.pairs.find(p => p.id === t.currentChampion);
+      } else if (t.format === 'roundrobin') {
+        const st = calcStandings(t.pairs, t.matches);
+        if (st.length > 0) champPair = t.pairs.find(p => p.id === st[0].pairId);
+      }
       if (champPair) {
         champPair.players.forEach(pl => {
           if (stats[pl.id]) stats[pl.id].tournamentWins++;

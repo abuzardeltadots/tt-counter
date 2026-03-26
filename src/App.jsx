@@ -3,8 +3,10 @@ import { calcServe, calcServeRemaining, isDeuce, getWinner, getDeuceResetScore, 
 import { soundScore, soundDeuce, soundWin, soundUndo, vib, ensureAudio } from './audio'
 import { loadHistory, saveHistory, loadSettings, saveSettings, loadMembers, saveMembers, loadActiveTournament, saveActiveTournament, loadTournamentHistory, saveTournamentHistory } from './storage'
 import { fireConfetti } from './confetti'
-import { createTournament, getNextMatch, processMatchResult, processStandbyPick, calcStandings, calcPlayerStats } from './tournament'
+import { createTournament, createRoundRobinTournament, getNextMatch, processMatchResult, processStandbyPick, calcStandings, calcPlayerStats } from './tournament'
 import { parseSyncHash, clearSyncHash, createSyncUrl, shareSyncUrl, shareResultsImage } from './share'
+import { getAllElo, getElo, updateElo, balancedPairs, getH2H } from './elo'
+import { checkAndUnlock, getPlayerBadges, getAchievementDefs } from './achievements'
 
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -21,6 +23,10 @@ const IconShuffle = () => <svg viewBox="0 0 24 24"><path d="M10.59 9.17L5.41 4 4
 const IconTrophy = () => <svg viewBox="0 0 24 24"><path d="M19 5h-2V3H7v2H5c-1.1 0-2 .9-2 2v1c0 2.55 1.92 4.63 4.39 4.94.63 1.5 1.98 2.63 3.61 2.96V19H7v2h10v-2h-4v-3.1c1.63-.33 2.98-1.46 3.61-2.96C19.08 12.63 21 10.55 21 8V7c0-1.1-.9-2-2-2zM5 8V7h2v3.82C5.84 10.4 5 9.3 5 8zm14 0c0 1.3-.84 2.4-2 2.82V7h2v1z"/></svg>;
 const IconStop = () => <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm5 11H7v-2h10v2z"/></svg>;
 const IconShare = () => <svg viewBox="0 0 24 24"><path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>;
+const IconMic = () => <svg viewBox="0 0 24 24"><path d="M12 14c1.66 0 2.99-1.34 2.99-3L15 5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>;
+const IconLive = () => <svg viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></svg>;
+const IconDownload = () => <svg viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></svg>;
+const IconUpload = () => <svg viewBox="0 0 24 24"><path d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/></svg>;
 
 export default function App() {
   // --- Existing game state ---
@@ -63,15 +69,30 @@ export default function App() {
   const [syncData, setSyncData] = useState(null);
   const [shareMsg, setShareMsg] = useState(null);
 
+  // --- Enhancement state ---
+  const [theme, setTheme] = useState(() => localStorage.getItem('tt_theme') || 'dark');
+  const [voiceOn, setVoiceOn] = useState(false);
+  const [liveOn, setLiveOn] = useState(false);
+  const [streak, setStreak] = useState({ team: null, count: 0 });
+  const [elapsed, setElapsed] = useState(0);
+  const [tFormat, setTFormat] = useState('koth');
+  const [balanceElo, setBalanceElo] = useState(false);
+  const [newBadges, setNewBadges] = useState([]);
+
   const undoStack = useRef([]);
   const confettiRef = useRef(null);
+  const timerRef = useRef(null);
+  const pointLogRef = useRef([]);
+  const channelRef = useRef(null);
+  const recognitionRef = useRef(null);
+  const importRef = useRef(null);
   const stateRef = useRef();
   stateRef.current = { scoreA, scoreB, serving, screen, settings, gameId, startedAt, deuceCount, tournamentMatchId };
 
   const winner = getWinner(scoreA, scoreB, settings.targetScore);
   const servesLeft = calcServeRemaining(scoreA, scoreB, settings.targetScore, settings.serveInterval);
 
-  const goTo = useCallback((next) => { setScreen(prev => { setPrevScreen(prev); return next; }); }, []);
+  const goTo = useCallback((next) => { setShowSettings(false); setScreen(prev => { setPrevScreen(prev); return next; }); }, []);
 
   const screenClass = (name) => {
     if (screen === name) return 'screen';
@@ -83,9 +104,14 @@ export default function App() {
   const nextMatch = useMemo(() => getNextMatch(activeTournament), [activeTournament]);
 
   const championPair = useMemo(() => {
-    if (!activeTournament?.currentChampion) return null;
+    if (!activeTournament) return null;
+    if (activeTournament.format === 'roundrobin') {
+      if (!activeTournament.finishedAt || standings.length === 0) return null;
+      return activeTournament.pairs.find(p => p.id === standings[0].pairId) || null;
+    }
+    if (!activeTournament.currentChampion) return null;
     return activeTournament.pairs.find(p => p.id === activeTournament.currentChampion);
-  }, [activeTournament]);
+  }, [activeTournament, standings]);
 
   const standings = useMemo(() => {
     if (!activeTournament) return [];
@@ -136,6 +162,9 @@ export default function App() {
     if (s.settings.vibrate) vib();
     if (s.settings.sound) soundScore();
     setBumpTeam(team); setTimeout(() => setBumpTeam(null), 300);
+    // Streak tracking
+    setStreak(prev => prev.team === team ? { team, count: prev.count + 1 } : { team, count: 1 });
+    pointLogRef.current.push({ team, scoreA: nA, scoreB: nB, t: Date.now() });
     const w = getWinner(nA, nB, s.settings.targetScore);
     if (isDeuce(nA, nB, s.settings.targetScore)) {
       const resetScore = getDeuceResetScore(s.settings.targetScore);
@@ -152,13 +181,35 @@ export default function App() {
     autoSave(nA, nB, s.gameId, s.startedAt, w, !!w, newDc);
     if (w && s.tournamentMatchId) {
       setActiveTournament(prev => {
+        if (!prev) return prev;
+        if (prev.format === 'roundrobin') {
+          const matches = prev.matches.map(m => {
+            if (m.id !== s.tournamentMatchId) return m;
+            return { ...m, scoreA: nA, scoreB: nB, finished: true, winner: w === 'a' ? m.pairAId : m.pairBId, deuceCount: newDc };
+          });
+          const allDone = matches.every(m => m.finished);
+          const updated = { ...prev, matches, ...(allDone ? { finishedAt: Date.now() } : {}) };
+          saveActiveTournament(updated);
+          return updated;
+        }
         const updated = processMatchResult(prev, s.gameId, nA, nB, w, newDc);
         saveActiveTournament(updated);
         return updated;
       });
     }
+    // ELO update on win (for tournament matches)
+    if (w && s.tournamentMatchId && activeTournament) {
+      const nm = activeTournament.format === 'roundrobin'
+        ? (() => { const m = activeTournament.matches.find(x => x.id === s.tournamentMatchId); if (!m) return null; return { pairA: activeTournament.pairs.find(p => p.id === m.pairAId), pairB: activeTournament.pairs.find(p => p.id === m.pairBId) }; })()
+        : getNextMatch(activeTournament);
+      if (nm) {
+        const winPair = w === 'a' ? nm.pairA : nm.pairB;
+        const losePair = w === 'a' ? nm.pairB : nm.pairA;
+        if (winPair && losePair) updateElo(winPair.players.map(p => p.id), losePair.players.map(p => p.id));
+      }
+    }
     if (w) setTimeout(() => { if (s.settings.sound) soundWin(); if (s.settings.vibrate) vib([50,50,50,50,100]); goTo('win'); fireConfetti(confettiRef.current); }, 500);
-  }, [autoSave, goTo]);
+  }, [autoSave, goTo, activeTournament]);
 
   // --- Undo ---
   const undo = useCallback(() => {
@@ -178,7 +229,7 @@ export default function App() {
     const ns = { ...stateRef.current.settings, targetScore: target, serveInterval: serve, teamA: nameA, teamB: nameB };
     setSettings(ns); saveSettings(ns);
     setScoreA(0); setScoreB(0); setServing('a'); setGameId(genId()); setStartedAt(Date.now()); setDeuceCount(0);
-    setTournamentMatchId(null);
+    setTournamentMatchId(null); setStreak({ team: null, count: 0 }); setElapsed(0); pointLogRef.current = [];
     undoStack.current = []; goTo('game');
   }, [goTo]);
 
@@ -210,25 +261,30 @@ export default function App() {
   }, [newMemberName]);
 
   const deleteMember = useCallback((id) => {
+    if (activeTournament && !activeTournament.finishedAt) return;
     setMembers(prev => { const n = prev.filter(m => m.id !== id); saveMembers(n); return n; });
     setMemberAvail(prev => { const n = { ...prev }; delete n[id]; return n; });
-  }, []);
+  }, [activeTournament]);
 
   const toggleAvail = useCallback((id) => {
     if (activeTournament && !activeTournament.finishedAt) return;
-    setMemberAvail(prev => ({ ...prev, [id]: !prev[id] }));
+    setMemberAvail(prev => ({ ...prev, [id]: prev[id] === false ? true : false }));
   }, [activeTournament]);
 
   // --- Generate pairs & start tournament ---
   const generateAndStart = useCallback(() => {
-    if (availableMembers.length < 4) return;
-    const t = createTournament(availableMembers, tSetupTarget, tSetupServe);
+    const minPlayers = tFormat === 'roundrobin' ? 6 : 4;
+    if (availableMembers.length < minPlayers) return;
+    const bFn = balanceElo ? balancedPairs : null;
+    const t = tFormat === 'roundrobin'
+      ? createRoundRobinTournament(availableMembers, tSetupTarget, tSetupServe, bFn)
+      : createTournament(availableMembers, tSetupTarget, tSetupServe, bFn);
     setActiveTournament(t);
     saveActiveTournament(t);
     setTournamentTab('history');
     didCelebrate.current = null;
     goTo('tournament');
-  }, [availableMembers, tSetupTarget, tSetupServe, goTo]);
+  }, [availableMembers, tSetupTarget, tSetupServe, tFormat, balanceElo, goTo]);
 
   // --- Play the next tournament match ---
   const playNextMatch = useCallback(() => {
@@ -239,6 +295,7 @@ export default function App() {
     setSettings(ns); saveSettings(ns);
     setScoreA(0); setScoreB(0); setServing('a'); setGameId(genId()); setStartedAt(Date.now()); setDeuceCount(0);
     setTournamentMatchId(genId());
+    setStreak({ team: null, count: 0 }); setElapsed(0); pointLogRef.current = [];
     undoStack.current = []; goTo('game');
   }, [activeTournament, goTo]);
 
@@ -287,6 +344,116 @@ export default function App() {
     didCelebrate.current = null;
     goTo('teams');
   }, [goTo]);
+
+  // --- Start a round-robin match ---
+  const startRRMatch = useCallback((match) => {
+    if (!activeTournament || match.finished) return;
+    const pA = activeTournament.pairs.find(p => p.id === match.pairAId);
+    const pB = activeTournament.pairs.find(p => p.id === match.pairBId);
+    if (!pA || !pB) return;
+    const ns = { ...stateRef.current.settings, targetScore: activeTournament.targetScore, serveInterval: activeTournament.serveInterval, teamA: pA.name, teamB: pB.name };
+    setSettings(ns); saveSettings(ns);
+    setScoreA(0); setScoreB(0); setServing('a'); setGameId(genId()); setStartedAt(Date.now()); setDeuceCount(0);
+    setTournamentMatchId(match.id); setStreak({ team: null, count: 0 }); setElapsed(0); pointLogRef.current = [];
+    undoStack.current = []; goTo('game');
+  }, [activeTournament, goTo]);
+
+  // --- End round-robin tournament ---
+  const endRRTournament = useCallback(() => {
+    setActiveTournament(prev => {
+      if (!prev) return prev;
+      const finished = { ...prev, finishedAt: Date.now() };
+      saveActiveTournament(finished);
+      return finished;
+    });
+  }, []);
+
+  // --- Timer effect ---
+  useEffect(() => {
+    if (screen === 'game' && startedAt && !winner) {
+      timerRef.current = setInterval(() => setElapsed(Date.now() - startedAt), 1000);
+    } else { clearInterval(timerRef.current); }
+    return () => clearInterval(timerRef.current);
+  }, [screen, startedAt, winner]);
+
+  // --- Theme effect ---
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('tt_theme', theme);
+  }, [theme]);
+
+  // --- BroadcastChannel for live spectator ---
+  useEffect(() => {
+    if (!window.BroadcastChannel) return;
+    channelRef.current = new BroadcastChannel('tt-counter-live');
+    return () => channelRef.current?.close();
+  }, []);
+
+  useEffect(() => {
+    if (liveOn && screen === 'game' && channelRef.current) {
+      channelRef.current.postMessage({ type: 'game', scoreA, scoreB, serving, teamA: settings.teamA, teamB: settings.teamB, target: settings.targetScore, deuceCount, elapsed, streak });
+    }
+  }, [liveOn, screen, scoreA, scoreB, serving, settings, deuceCount, elapsed, streak]);
+
+  useEffect(() => {
+    if (!channelRef.current) return;
+    const handler = (e) => {
+      if (e.data.type === 'game' && screen !== 'game') {
+        // Auto-spectate: show received scores on game screen
+      }
+    };
+    channelRef.current.addEventListener('message', handler);
+    return () => channelRef.current?.removeEventListener('message', handler);
+  }, [screen]);
+
+  // --- Voice scoring ---
+  const toggleVoice = useCallback(async () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) return;
+    if (voiceOn) { recognitionRef.current?.stop(); recognitionRef.current = null; setVoiceOn(false); return; }
+    // Request mic permission first (triggers browser prompt)
+    try { const stream = await navigator.mediaDevices.getUserMedia({ audio: true }); stream.getTracks().forEach(t => t.stop()); }
+    catch { return; } // user denied mic
+    const r = new SR(); r.continuous = true; r.interimResults = false; r.lang = 'en-US';
+    r.onresult = (e) => {
+      const t = e.results[e.results.length - 1][0].transcript.toLowerCase().trim();
+      if (t.includes('up') || t.includes('one') || t.includes('left')) addPoint('a');
+      else if (t.includes('down') || t.includes('two') || t.includes('right')) addPoint('b');
+      else if (t.includes('undo') || t.includes('back')) undo();
+    };
+    r.onerror = () => {};
+    r.onend = () => { if (recognitionRef.current) { try { r.start(); } catch {} } };
+    try { r.start(); recognitionRef.current = r; setVoiceOn(true); } catch { /* unsupported */ }
+  }, [voiceOn, addPoint, undo]);
+
+  // --- Export / Import ---
+  const handleExport = useCallback(() => {
+    const data = { history: loadHistory(), settings: loadSettings(), members: loadMembers(), activeTournament: loadActiveTournament(), tournamentHistory: loadTournamentHistory(), elo: getAllElo(), theme, v: 1 };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'tt-counter-backup.json';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  }, [theme]);
+
+  const handleImport = useCallback((e) => {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const d = JSON.parse(ev.target.result);
+        if (d.history) { saveHistory(d.history); setHistory(d.history); }
+        if (d.settings) { saveSettings(d.settings); setSettings(prev => ({ ...prev, ...d.settings })); }
+        if (d.members) { saveMembers(d.members); setMembers(d.members); const a = {}; d.members.forEach(m => { a[m.id] = true; }); setMemberAvail(a); }
+        if (d.activeTournament) { saveActiveTournament(d.activeTournament); setActiveTournament(d.activeTournament); }
+        if (d.tournamentHistory) { saveTournamentHistory(d.tournamentHistory); setTournamentHistory(d.tournamentHistory); }
+        if (d.elo) localStorage.setItem('tt_elo', JSON.stringify(d.elo));
+        if (d.theme) { setTheme(d.theme); }
+        setShowSettings(false);
+      } catch { /* invalid file */ }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+  }, []);
 
   // --- Sync: detect URL hash on mount ---
   useEffect(() => {
@@ -409,6 +576,8 @@ export default function App() {
                   {memberAvail[m.id] !== false && <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>}
                 </div>
                 <span className="member-name">{m.name}</span>
+                <span className="member-elo">{getElo(m.id)}</span>
+                {getPlayerBadges(m.id).length > 0 && <span className="member-badges">{getPlayerBadges(m.id).length}</span>}
                 <button className="btn btn-delete-sm" onClick={() => deleteMember(m.id)}><IconDelete/></button>
               </div>
             ))}
@@ -424,6 +593,18 @@ export default function App() {
                 <div className="pill-group">
                   {[2,5].map(v => <button key={v} className={`pill pill-sm ${tSetupServe===v?'active':''}`} onClick={() => setTSetupServe(v)}>Serve {v}</button>)}
                 </div>
+              </div>
+              <div className="t-setup-row">
+                <div className="pill-group">
+                  <button className={`pill pill-sm ${tFormat==='koth'?'active':''}`} onClick={() => setTFormat('koth')}>King of Hill</button>
+                  <button className={`pill pill-sm ${tFormat==='roundrobin'?'active':''}`} onClick={() => setTFormat('roundrobin')}>Round Robin</button>
+                </div>
+              </div>
+              <div className="t-setup-row" style={{alignItems:'center',gap:10}}>
+                <div className={`member-check ${balanceElo?'checked':''}`} onClick={() => setBalanceElo(b => !b)} style={{width:22,height:22}}>
+                  {balanceElo && <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>}
+                </div>
+                <span style={{fontSize:13,fontWeight:600,color:'var(--dim)'}}>Balance pairs by ELO</span>
               </div>
             </div>
           )}
@@ -453,12 +634,12 @@ export default function App() {
               <IconTrophy/> Continue Tournament
             </button>
           ) : (
-            <button className="btn btn-primary teams-go-btn" onClick={generateAndStart} disabled={availableMembers.length < 4}>
+            <button className="btn btn-primary teams-go-btn" onClick={generateAndStart} disabled={availableMembers.length < (tFormat === 'roundrobin' ? 6 : 4)}>
               <IconShuffle/> Generate Pairs & Play
             </button>
           )}
-          {availableMembers.length < 4 && !(activeTournament && !activeTournament.finishedAt) && (
-            <div className="teams-hint">Need at least 4 available players</div>
+          {availableMembers.length < (tFormat === 'roundrobin' ? 6 : 4) && !(activeTournament && !activeTournament.finishedAt) && (
+            <div className="teams-hint">Need at least {tFormat === 'roundrobin' ? 6 : 4} available players</div>
           )}
         </div>
       </div>
@@ -482,8 +663,8 @@ export default function App() {
             </div>
           )}
 
-          {/* Current Champion */}
-          {championPair && !activeTournament?.finishedAt && (
+          {/* Current Champion (KOTH only) */}
+          {championPair && !activeTournament?.finishedAt && activeTournament?.format === 'koth' && (
             <div className="champion-banner">
               <span className="champion-crown">&#x1F451;</span>
               <div className="champion-info">
@@ -493,8 +674,8 @@ export default function App() {
             </div>
           )}
 
-          {/* Standby Pick */}
-          {activeTournament?.pendingPick && (() => {
+          {/* Standby Pick (KOTH only) */}
+          {activeTournament?.format === 'koth' && activeTournament?.pendingPick && (() => {
             const { standbyPlayer, losingPairId } = activeTournament.pendingPick;
             const losingPair = activeTournament.pairs.find(p => p.id === losingPairId);
             if (!losingPair) return null;
@@ -514,8 +695,8 @@ export default function App() {
             );
           })()}
 
-          {/* Next Match */}
-          {nextMatch && !activeTournament?.pendingPick && !activeTournament?.finishedAt && (
+          {/* Next Match (KOTH only) */}
+          {activeTournament?.format === 'koth' && nextMatch && !activeTournament?.pendingPick && !activeTournament?.finishedAt && (
             <div className="next-match-card">
               <div className="nm-label">{activeTournament?.currentChampion ? 'Next Match' : 'First Match'}</div>
               <div className="nm-teams">
@@ -533,8 +714,35 @@ export default function App() {
             </div>
           )}
 
-          {/* Queue + Standby */}
-          {activeTournament && !activeTournament.finishedAt && (activeTournament.queue.length > 0 || activeTournament.standby) && (
+          {/* Round Robin matches */}
+          {activeTournament?.format === 'roundrobin' && !activeTournament.finishedAt && (
+            <div className="match-history-list">
+              {activeTournament.matches.map((m, i) => {
+                const pA = activeTournament.pairs.find(p => p.id === m.pairAId);
+                const pB = activeTournament.pairs.find(p => p.id === m.pairBId);
+                return (
+                  <div key={m.id} className={`match-card ${m.finished?'done':''}`}>
+                    <div className="match-num">Match {i+1}</div>
+                    <div className="match-teams">
+                      <div className={`match-team ${m.winner===m.pairAId?'winner':''}`}>
+                        <span className="match-team-name">{pA?.name||'?'}</span>
+                        {m.finished && <span className="match-team-score">{m.scoreA}</span>}
+                      </div>
+                      <span className="match-vs">VS</span>
+                      <div className={`match-team ${m.winner===m.pairBId?'winner':''}`}>
+                        <span className="match-team-name">{pB?.name||'?'}</span>
+                        {m.finished && <span className="match-team-score">{m.scoreB}</span>}
+                      </div>
+                    </div>
+                    {!m.finished && <button className="btn btn-play-match" onClick={() => startRRMatch(m)}><IconPlay/> Play</button>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Queue + Standby (KOTH only) */}
+          {activeTournament && activeTournament.format !== 'roundrobin' && !activeTournament.finishedAt && (activeTournament.queue?.length > 0 || activeTournament.standby) && (
             <div className="queue-section">
               <label className="setup-label">Waiting</label>
               <div className="queue-chips">
@@ -629,7 +837,10 @@ export default function App() {
           ) : (
             <div className="tournament-foot-row">
               <button className="btn btn-ghost tournament-foot-btn" onClick={discardTournament}><IconDelete/> Discard</button>
-              {activeTournament?.matches.length > 0 && (
+              {activeTournament?.format === 'roundrobin' && activeTournament?.matches.some(m => m.finished) && (
+                <button className="btn btn-primary tournament-foot-btn" onClick={endRRTournament}><IconStop/> End Tournament</button>
+              )}
+              {activeTournament?.format !== 'roundrobin' && activeTournament?.matches.length > 0 && (
                 <button className="btn btn-primary tournament-foot-btn" onClick={endTournament}><IconStop/> End &amp; Crown</button>
               )}
             </div>
@@ -659,10 +870,16 @@ export default function App() {
             </div>
           </div>
         </div>
+        {streak.count >= 3 && <div className="streak-banner">{streak.count} in a row!</div>}
         <div className="bottom-bar">
           <button className="btn btn-ghost" onClick={undo}><IconUndo/> Undo</button>
-          <div className="game-info"><span>{settings.targetScore}</span> pts &bull; serve every <span>{settings.serveInterval}</span>{deuceCount > 0 && <> &bull; Deuce: {deuceCount}</>}</div>
-          <button className="btn btn-ghost" onClick={() => goTo('history')}><IconHistory/> History</button>
+          <div className="game-info">
+            <span className="game-timer">{formatDuration(elapsed)}</span>
+            {deuceCount > 0 && <> &bull; Deuce: {deuceCount}</>}
+            {voiceOn && <span className="voice-dot" title="Voice active"/>}
+            {liveOn && <span className="live-dot" title="Broadcasting"/>}
+          </div>
+          <button className="btn btn-ghost" onClick={() => goTo('history')}><IconHistory/></button>
         </div>
       </div>
 
@@ -671,7 +888,23 @@ export default function App() {
         <div className="win-crown">{'\u{1F451}'}</div>
         <div className={`win-title winner-${winner||'a'}`}>{winner==='a'?settings.teamA:settings.teamB} Wins!</div>
         <div className="win-score"><span className="wa">{scoreA}</span> <span style={{color:'var(--dim)'}}>-</span> <span className="wb">{scoreB}</span></div>
-        <div className="win-details">Total Points: {scoreA+scoreB}{deuceCount > 0 && <><br/>Deuces: {deuceCount}</>}<br/>Duration: {startedAt?formatDuration(Date.now()-startedAt):'\u2014'}</div>
+        <div className="win-details">
+          Total Points: {scoreA+scoreB}{deuceCount > 0 && <> &bull; Deuces: {deuceCount}</>}<br/>
+          Duration: {startedAt?formatDuration(Date.now()-startedAt):'\u2014'}
+          {pointLogRef.current.length > 0 && (() => {
+            let maxS = 0, cur = 0, lastT = null;
+            pointLogRef.current.forEach(p => { if (p.team === lastT) { cur++; maxS = Math.max(maxS, cur); } else { cur = 1; lastT = p.team; } });
+            maxS = Math.max(maxS, cur);
+            return maxS >= 3 ? <><br/>Best streak: {maxS} in a row</> : null;
+          })()}
+        </div>
+        {pointLogRef.current.length > 2 && (
+          <svg viewBox="0 0 200 60" className="momentum-svg">
+            <line x1="0" y1="30" x2="200" y2="30" stroke="var(--dim)" strokeWidth="0.5" strokeDasharray="2"/>
+            <polyline fill="none" stroke="var(--a)" strokeWidth="1.5" strokeLinejoin="round"
+              points={pointLogRef.current.map((p, i) => `${(i/(pointLogRef.current.length-1))*200},${30-(p.scoreA-p.scoreB)*2}`).join(' ')}/>
+          </svg>
+        )}
         <div className="win-actions">
           {tournamentMatchId ? (
             <button className="btn btn-primary" onClick={backToTournament}><IconTrophy/> Back to Tournament</button>
@@ -685,7 +918,7 @@ export default function App() {
       {/* HISTORY */}
       <div className={`${screenClass('history')} history-screen`}>
         <div className="history-header">
-          <button className="btn btn-ghost" onClick={() => goTo(prevScreen==='win'||prevScreen==='game'?prevScreen:prevScreen==='tournament'?'tournament':'setup')}><IconBack/> Back</button>
+          <button className="btn btn-ghost" onClick={() => goTo(['win','game','tournament'].includes(prevScreen)?prevScreen:'setup')}><IconBack/> Back</button>
           <h2>Game History</h2>
           <button className="btn btn-ghost" onClick={() => setShowSettings(true)}><IconSettings/></button>
         </div>
@@ -732,6 +965,23 @@ export default function App() {
           <div className="setting-row">
             <div><div className="setting-label">Sound Effects</div><div className="setting-desc">Beeps on score, deuce &amp; win</div></div>
             <div className={`toggle ${settings.sound?'on':''}`} onClick={() => { const n={...settings,sound:!settings.sound}; setSettings(n); saveSettings(n); }}/>
+          </div>
+          <div className="setting-row">
+            <div><div className="setting-label">Dark Mode</div><div className="setting-desc">Toggle light / dark theme</div></div>
+            <div className={`toggle ${theme==='dark'?'on':''}`} onClick={() => setTheme(t => t==='dark'?'light':'dark')}/>
+          </div>
+          <div className="setting-row">
+            <div><div className="setting-label">Voice Scoring</div><div className="setting-desc">Say "up"/"down" to score</div></div>
+            <div className={`toggle ${voiceOn?'on':''}`} onClick={toggleVoice}/>
+          </div>
+          <div className="setting-row">
+            <div><div className="setting-label">Live Broadcast</div><div className="setting-desc">Share scores to other tabs</div></div>
+            <div className={`toggle ${liveOn?'on':''}`} onClick={() => setLiveOn(l => !l)}/>
+          </div>
+          <div className="setting-row setting-row-btns">
+            <button className="btn btn-outline btn-export" onClick={handleExport}><IconDownload/> Export</button>
+            <button className="btn btn-outline btn-export" onClick={() => importRef.current?.click()}><IconUpload/> Import</button>
+            <input ref={importRef} type="file" accept=".json" style={{display:'none'}} onChange={handleImport}/>
           </div>
           <button className="btn btn-primary" style={{width:'100%',justifyContent:'center',marginTop:20,padding:14,fontSize:15}} onClick={() => setShowSettings(false)}>Done</button>
         </div>

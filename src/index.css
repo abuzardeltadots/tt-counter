@@ -296,6 +296,46 @@ html,body,#root{height:100%;width:100%;overflow:hidden;font-family:'Segoe UI',sy
 /* SHARE TOAST */
 .share-toast{text-align:center;padding:8px 16px;font-size:12px;font-weight:700;color:var(--a);letter-spacing:.5px;animation:slideUp .3s ease-out}
 
+/* STREAK BANNER */
+.streak-banner{position:absolute;bottom:60px;left:50%;transform:translateX(-50%);z-index:10;font-size:14px;font-weight:800;color:var(--a);background:rgba(255,107,53,.12);padding:6px 18px;border-radius:20px;letter-spacing:1px;pointer-events:none;animation:slideUp .3s ease-out}
+
+/* GAME TIMER */
+.game-timer{font-variant-numeric:tabular-nums;font-weight:700;color:var(--text)}
+
+/* VOICE / LIVE DOTS */
+.voice-dot,.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;vertical-align:middle;animation:servePulse 1.5s ease-in-out infinite}
+.voice-dot{background:#50ff50}
+.live-dot{background:#ff5050}
+
+/* MOMENTUM CHART */
+.momentum-svg{width:100%;max-width:280px;height:50px;margin:4px auto;display:block;opacity:.7}
+
+/* MEMBER ELO & BADGES */
+.member-elo{font-size:11px;font-weight:700;color:var(--b);min-width:32px;text-align:right}
+.member-badges{font-size:10px;font-weight:800;color:var(--win-gold);background:rgba(255,215,0,.12);padding:2px 6px;border-radius:6px}
+.member-badges::before{content:'\2605 '}
+
+/* SETTINGS EXPORT/IMPORT ROW */
+.setting-row-btns{display:flex;gap:8px;justify-content:center;border-bottom:none !important;padding-top:8px !important}
+.btn-export{flex:1;justify-content:center;font-size:12px !important;padding:10px !important;border-radius:12px !important}
+
+/* LIGHT THEME */
+[data-theme="light"]{
+  --bg:#f0f0f5;--surface:#ffffff;--surface2:#e4e4ee;
+  --a:#e85520;--a-glow:rgba(232,85,32,.18);
+  --b:#0088bb;--b-glow:rgba(0,136,187,.18);
+  --text:#1a1a2e;--dim:#8888aa;
+  --win-gold:#c89e00;--win-glow:rgba(200,158,0,.25);
+}
+[data-theme="light"] .setup-ball{box-shadow:0 0 30px var(--a-glow),inset 0 -4px 8px rgba(0,0,0,.1)}
+[data-theme="light"] .modal{background:#fff}
+[data-theme="light"] .game-card{background:#fff}
+[data-theme="light"] .match-card{background:#fff}
+[data-theme="light"] .member-card{background:#fff}
+[data-theme="light"] .name-input{color:var(--text)}
+[data-theme="light"] .teams-add-input{background:#fff;color:var(--text);border-color:var(--surface2)}
+[data-theme="light"] ::-webkit-scrollbar-thumb{background:var(--dim)}
+
 /* iOS SAFE AREAS */
 @supports(padding:env(safe-area-inset-top)){
   .setup-container{padding-top:calc(32px + env(safe-area-inset-top))}
