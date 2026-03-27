@@ -103,6 +103,11 @@ export default function App() {
   // --- Computed tournament data ---
   const nextMatch = useMemo(() => getNextMatch(activeTournament), [activeTournament]);
 
+  const standings = useMemo(() => {
+    if (!activeTournament) return [];
+    return calcStandings(activeTournament.pairs, activeTournament.matches);
+  }, [activeTournament]);
+
   const championPair = useMemo(() => {
     if (!activeTournament) return null;
     if (activeTournament.format === 'roundrobin') {
@@ -112,11 +117,6 @@ export default function App() {
     if (!activeTournament.currentChampion) return null;
     return activeTournament.pairs.find(p => p.id === activeTournament.currentChampion);
   }, [activeTournament, standings]);
-
-  const standings = useMemo(() => {
-    if (!activeTournament) return [];
-    return calcStandings(activeTournament.pairs, activeTournament.matches);
-  }, [activeTournament]);
 
   const allTournaments = useMemo(() => {
     const list = [...tournamentHistory];
