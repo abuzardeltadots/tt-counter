@@ -72,7 +72,9 @@ html,body,#root{height:100%;width:100%;overflow:hidden;font-family:'Segoe UI',sy
 .btn-primary{background:linear-gradient(135deg,var(--a),#ff8f5e);color:#fff;box-shadow:0 4px 15px var(--a-glow)}
 .btn-primary:active{transform:scale(.95)}
 .btn svg{width:16px;height:16px;fill:currentColor}
-.game-info{font-size:12px;color:var(--dim);text-align:center;line-height:1.4}
+.btn-stop-game{color:#ff5050 !important;opacity:.6}
+.btn-stop-game:active{opacity:1}
+.game-info{font-size:12px;color:var(--dim);text-align:center;line-height:1.4;flex:1}
 .game-info span{color:var(--text);font-weight:600}
 
 /* WIN */
@@ -92,13 +94,13 @@ html,body,#root{height:100%;width:100%;overflow:hidden;font-family:'Segoe UI',sy
 .confetti-canvas{position:fixed;inset:0;pointer-events:none;z-index:100}
 
 /* HISTORY */
-.history-screen{background:var(--bg);padding:0}
+.history-screen{background:var(--bg);padding:0;overflow:hidden}
 .history-header{display:flex;align-items:center;gap:12px;padding:16px 20px;background:var(--surface);border-bottom:1px solid rgba(255,255,255,.05);flex-shrink:0}
 .history-header h2{flex:1;font-size:18px;font-weight:800;letter-spacing:1px}
-.history-list{flex:1;overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px;-webkit-overflow-scrolling:touch}
+.history-list{flex:1;overflow-y:auto;padding:12px 16px;padding-bottom:16px;display:flex;flex-direction:column;gap:10px;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
 .history-empty{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;color:var(--dim);font-size:15px}
 .history-empty svg{width:48px;height:48px;fill:var(--dim);opacity:.4}
-.game-card{background:var(--surface);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.05);transition:transform .15s;position:relative;overflow:hidden;animation:slideUp .3s ease-out backwards}
+.game-card{background:var(--surface);border-radius:16px;padding:16px;border:1px solid rgba(255,255,255,.05);transition:transform .15s;position:relative;animation:slideUp .3s ease-out backwards}
 .game-card:active{transform:scale(.98)}
 .game-card.in-progress{border-color:var(--a);border-style:dashed}
 .game-card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
@@ -284,8 +286,33 @@ html,body,#root{height:100%;width:100%;overflow:hidden;font-family:'Segoe UI',sy
 .tournament-foot-row{display:flex;gap:8px}
 .tournament-foot-btn{flex:1;justify-content:center;padding:12px !important;font-size:14px !important;border-radius:14px !important}
 
-/* SETUP LINKS */
+/* SETUP LINKS + SETTINGS BUTTON */
 .setup-links{display:flex;gap:8px;margin-top:-8px}
+.setup-settings-btn{position:absolute;top:16px;right:16px;z-index:2}
+
+/* GAME RESULT DETAIL MODAL */
+.detail-modal{text-align:center;padding-bottom:28px}
+.detail-winner{font-size:18px;font-weight:900;color:var(--win-gold);letter-spacing:1px;margin-bottom:8px}
+.detail-score{font-size:clamp(48px,14vw,72px);font-weight:900;line-height:1;margin:8px 0}
+.detail-score .detail-w{color:var(--win-gold);text-shadow:0 0 20px var(--win-glow)}
+.detail-sep{color:var(--dim);margin:0 8px}
+.detail-teams{display:flex;align-items:center;justify-content:center;gap:12px;font-size:14px;margin:8px 0 12px}
+.detail-info{font-size:12px;color:var(--dim);line-height:1.8}
+.detail-actions{display:flex;gap:8px;margin-top:16px}
+.detail-actions .btn{flex:1;justify-content:center;padding:12px;font-size:14px;border-radius:14px}
+
+/* PAST TOURNAMENTS MODAL */
+.past-t-modal{max-height:85vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+.past-t-card{background:var(--bg);border:1px solid rgba(255,255,255,.06);border-radius:14px;padding:12px 14px;margin-bottom:10px;animation:slideUp .3s ease-out backwards}
+.past-t-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.past-t-date{font-size:11px;color:var(--dim)}
+.past-t-format{font-size:10px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:var(--b);background:rgba(0,212,255,.1);padding:2px 8px;border-radius:6px}
+.past-t-winner{font-size:14px;font-weight:800;color:var(--win-gold);margin-bottom:4px}
+.past-t-stats{font-size:11px;color:var(--dim);margin-bottom:8px}
+.past-t-standing{display:flex;gap:6px;font-size:12px;padding:3px 0}
+.past-t-rank{color:var(--dim);font-weight:700;min-width:18px}
+.past-t-name{flex:1;font-weight:600}
+.past-t-wl{font-weight:700;color:var(--a)}
 
 /* SYNC MODAL */
 .sync-info{display:flex;flex-direction:column;gap:6px;margin:12px 0 20px}
@@ -302,10 +329,44 @@ html,body,#root{height:100%;width:100%;overflow:hidden;font-family:'Segoe UI',sy
 /* GAME TIMER */
 .game-timer{font-variant-numeric:tabular-nums;font-weight:700;color:var(--text)}
 
-/* VOICE / LIVE DOTS */
-.voice-dot,.live-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;vertical-align:middle;animation:servePulse 1.5s ease-in-out infinite}
-.voice-dot{background:#50ff50}
-.live-dot{background:#ff5050}
+/* VOICE / LIVE INDICATORS */
+.voice-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-left:6px;vertical-align:middle;animation:servePulse 1.5s ease-in-out infinite;background:#50ff50}
+.live-badge{display:inline-flex;align-items:center;gap:4px;margin-left:6px;font-size:9px;font-weight:800;letter-spacing:1px;color:#ff5050;background:rgba(255,80,80,.12);padding:2px 8px;border-radius:6px;animation:servePulse 1.5s ease-in-out infinite}
+
+/* LIVE HOST CONTROLS (Settings) */
+.setting-row-live{border-bottom:none !important;padding-bottom:0 !important}
+.live-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,.05)}
+.btn-sm{padding:8px 14px !important;font-size:12px !important;border-radius:10px !important}
+.live-host-active{display:flex;flex-direction:column;align-items:center;gap:4px;flex:1}
+.live-room-code{font-size:32px;font-weight:900;letter-spacing:8px;color:var(--a);font-variant-numeric:tabular-nums}
+.live-room-label{font-size:11px;color:var(--dim);font-weight:600}
+
+/* JOIN ROOM MODAL */
+.join-form{display:flex;flex-direction:column;gap:10px;margin:16px 0 8px}
+.join-input{width:100%;background:var(--surface2);border:2px solid rgba(255,255,255,.08);border-radius:14px;padding:16px;color:var(--text);font-size:24px;font-weight:900;font-family:inherit;outline:none;text-align:center;letter-spacing:6px;font-variant-numeric:tabular-nums;box-sizing:border-box}
+.join-input:focus{border-color:var(--a)}
+.join-input::placeholder{font-size:13px;font-weight:600;letter-spacing:1px;color:var(--dim)}
+.join-hint{font-size:12px;color:var(--dim);text-align:center}
+
+/* SPECTATOR OVERLAY */
+.spectator-overlay{position:fixed;inset:0;z-index:90;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px}
+.spec-header{display:flex;align-items:center;gap:8px;position:absolute;top:16px;right:16px;font-size:12px;font-weight:800;color:#ff5050;letter-spacing:1px}
+.spec-live-dot{width:10px;height:10px;border-radius:50%;background:#ff5050;animation:servePulse 1.5s ease-in-out infinite}
+.spec-scoreboard{display:flex;align-items:center;gap:16px;width:100%;max-width:500px}
+.spec-team{flex:1;text-align:center;position:relative}
+.spec-name{font-size:clamp(13px,3vw,16px);font-weight:700;letter-spacing:2px;text-transform:uppercase;opacity:.7;margin-bottom:8px}
+.spec-a .spec-name{color:var(--a)}
+.spec-b .spec-name{color:var(--b)}
+.spec-score{font-size:clamp(60px,20vw,120px);font-weight:900;line-height:1;font-variant-numeric:tabular-nums}
+.spec-a .spec-score{color:var(--a);text-shadow:0 0 40px var(--a-glow)}
+.spec-b .spec-score{color:var(--b);text-shadow:0 0 40px var(--b-glow)}
+.spec-serve{width:10px;height:10px;border-radius:50%;margin:8px auto 0;animation:servePulse 1.5s ease-in-out infinite}
+.spec-a .spec-serve{background:var(--a);box-shadow:0 0 12px var(--a-glow)}
+.spec-b .spec-serve{background:var(--b);box-shadow:0 0 12px var(--b-glow)}
+.spec-divider{width:3px;height:80px;background:linear-gradient(var(--a),var(--b));border-radius:2px;position:relative}
+.spec-vs{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--surface2);border:2px solid var(--dim);border-radius:50%;width:36px;height:36px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;color:var(--dim)}
+.spec-info{font-size:13px;color:var(--dim);font-weight:600;text-align:center}
+.spec-winner{font-size:clamp(24px,7vw,40px);font-weight:900;color:var(--win-gold);text-shadow:0 0 30px var(--win-glow);text-align:center;animation:deucePulse 1.5s ease-in-out infinite}
 
 /* MOMENTUM CHART */
 .momentum-svg{width:100%;max-width:280px;height:50px;margin:4px auto;display:block;opacity:.7}
@@ -338,6 +399,7 @@ html,body,#root{height:100%;width:100%;overflow:hidden;font-family:'Segoe UI',sy
 
 /* iOS SAFE AREAS */
 @supports(padding:env(safe-area-inset-top)){
+  .setup-settings-btn{top:calc(16px + env(safe-area-inset-top));right:calc(16px + env(safe-area-inset-right))}
   .setup-container{padding-top:calc(32px + env(safe-area-inset-top))}
   .history-header{padding-top:calc(16px + env(safe-area-inset-top))}
   .teams-header{padding-top:calc(16px + env(safe-area-inset-top))}
@@ -347,4 +409,5 @@ html,body,#root{height:100%;width:100%;overflow:hidden;font-family:'Segoe UI',sy
   .tournament-footer{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
   .history-footer{padding-bottom:calc(12px + env(safe-area-inset-bottom))}
   .win-screen{padding-top:calc(40px + env(safe-area-inset-top))}
+  .spec-header{top:calc(16px + env(safe-area-inset-top));right:calc(16px + env(safe-area-inset-right))}
 }

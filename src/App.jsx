@@ -7,6 +7,7 @@ import { createTournament, createRoundRobinTournament, getNextMatch, processMatc
 import { parseSyncHash, clearSyncHash, createSyncUrl, shareSyncUrl, shareResultsImage } from './share'
 import { getAllElo, getElo, updateElo, balancedPairs, getH2H } from './elo'
 import { checkAndUnlock, getPlayerBadges, getAchievementDefs } from './achievements'
+import { createHost, joinHost } from './spectator'
 
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
@@ -46,8 +47,8 @@ export default function App() {
   const [bumpTeam, setBumpTeam] = useState(null);
   const [setupTarget, setSetupTarget] = useState(settings.targetScore);
   const [setupServe, setSetupServe] = useState(settings.serveInterval);
-  const [setupNameA, setSetupNameA] = useState(settings.teamA);
-  const [setupNameB, setSetupNameB] = useState(settings.teamB);
+  const [setupNameA, setSetupNameA] = useState('Team A');
+  const [setupNameB, setSetupNameB] = useState('Team B');
   const [deuceCount, setDeuceCount] = useState(0);
   const [deuceFlash, setDeuceFlash] = useState(false);
 
@@ -68,11 +69,17 @@ export default function App() {
   const [tSetupServe, setTSetupServe] = useState(settings.serveInterval);
   const [syncData, setSyncData] = useState(null);
   const [shareMsg, setShareMsg] = useState(null);
+  const [detailGame, setDetailGame] = useState(null);
+  const [showPastTournaments, setShowPastTournaments] = useState(false);
 
   // --- Enhancement state ---
   const [theme, setTheme] = useState(() => localStorage.getItem('tt_theme') || 'dark');
   const [voiceOn, setVoiceOn] = useState(false);
-  const [liveOn, setLiveOn] = useState(false);
+  const [liveCode, setLiveCode] = useState(null); // host room code
+  const [liveViewers, setLiveViewers] = useState(0);
+  const [spectating, setSpectating] = useState(null); // spectator received data
+  const [joinCode, setJoinCode] = useState('');
+  const [showJoinModal, setShowJoinModal] = useState(false);
   const [streak, setStreak] = useState({ team: null, count: 0 });
   const [elapsed, setElapsed] = useState(0);
   const [tFormat, setTFormat] = useState('koth');
@@ -83,7 +90,8 @@ export default function App() {
   const confettiRef = useRef(null);
   const timerRef = useRef(null);
   const pointLogRef = useRef([]);
-  const channelRef = useRef(null);
+  const hostRef = useRef(null);
+  const specRef = useRef(null);
   const recognitionRef = useRef(null);
   const importRef = useRef(null);
   const stateRef = useRef();
@@ -382,29 +390,18 @@ export default function App() {
     localStorage.setItem('tt_theme', theme);
   }, [theme]);
 
-  // --- BroadcastChannel for live spectator ---
+  // --- PeerJS Live Spectator: host broadcast ---
   useEffect(() => {
-    if (!window.BroadcastChannel) return;
-    channelRef.current = new BroadcastChannel('tt-counter-live');
-    return () => channelRef.current?.close();
-  }, []);
-
-  useEffect(() => {
-    if (liveOn && screen === 'game' && channelRef.current) {
-      channelRef.current.postMessage({ type: 'game', scoreA, scoreB, serving, teamA: settings.teamA, teamB: settings.teamB, target: settings.targetScore, deuceCount, elapsed, streak });
+    if (liveCode && hostRef.current && screen === 'game') {
+      hostRef.current.broadcast({ scoreA, scoreB, serving, teamA: settings.teamA, teamB: settings.teamB, target: settings.targetScore, deuceCount, elapsed, streak, winner: getWinner(scoreA, scoreB, settings.targetScore) });
+      setLiveViewers(hostRef.current.getViewerCount());
     }
-  }, [liveOn, screen, scoreA, scoreB, serving, settings, deuceCount, elapsed, streak]);
+  }, [liveCode, screen, scoreA, scoreB, serving, settings, deuceCount, elapsed, streak]);
 
+  // Cleanup host/spectator on unmount
   useEffect(() => {
-    if (!channelRef.current) return;
-    const handler = (e) => {
-      if (e.data.type === 'game' && screen !== 'game') {
-        // Auto-spectate: show received scores on game screen
-      }
-    };
-    channelRef.current.addEventListener('message', handler);
-    return () => channelRef.current?.removeEventListener('message', handler);
-  }, [screen]);
+    return () => { hostRef.current?.destroy(); specRef.current?.destroy(); };
+  }, []);
 
   // --- Voice scoring ---
   const toggleVoice = useCallback(async () => {
@@ -425,6 +422,39 @@ export default function App() {
     r.onend = () => { if (recognitionRef.current) { try { r.start(); } catch {} } };
     try { r.start(); recognitionRef.current = r; setVoiceOn(true); } catch { /* unsupported */ }
   }, [voiceOn, addPoint, undo]);
+
+  // --- Live: start/stop hosting ---
+  const stopHosting = useCallback(() => {
+    hostRef.current?.destroy(); hostRef.current = null; setLiveCode(null); setLiveViewers(0);
+  }, []);
+
+  const startHosting = useCallback(() => {
+    if (hostRef.current) { stopHosting(); return; }
+    const host = createHost(
+      (code) => setLiveCode(code),
+      () => setLiveCode(null)
+    );
+    hostRef.current = host;
+  }, [stopHosting]);
+
+  // --- Live: join as spectator ---
+  const joinAsSpectator = useCallback(() => {
+    const code = joinCode.trim();
+    if (!code || code.length !== 4) return;
+    specRef.current?.destroy();
+    const spec = joinHost(
+      code,
+      (data) => setSpectating(data),
+      () => setShowJoinModal(false),
+      () => { setSpectating(null); specRef.current = null; },
+      () => { setSpectating(null); specRef.current = null; }
+    );
+    specRef.current = spec;
+  }, [joinCode]);
+
+  const leaveSpectator = useCallback(() => {
+    specRef.current?.destroy(); specRef.current = null; setSpectating(null);
+  }, []);
 
   // --- Export / Import ---
   const handleExport = useCallback(() => {
@@ -483,6 +513,12 @@ export default function App() {
     if (result === 'downloaded') { setShareMsg('Image saved!'); setTimeout(() => setShareMsg(null), 2000); }
   }, [activeTournament, standings, championPair]);
 
+  const shareGameResult = useCallback(async (g) => {
+    const text = `${g.teamA} ${g.scoreA} - ${g.scoreB} ${g.teamB}${g.winner ? ` | ${g.winner === 'a' ? g.teamA : g.teamB} wins!` : ''}${g.deuceCount ? ` | ${g.deuceCount} deuces` : ''} | TT Counter`;
+    if (navigator.share) { try { await navigator.share({ title: 'Match Result', text }); } catch {} }
+    else if (navigator.clipboard) { await navigator.clipboard.writeText(text); }
+  }, []);
+
   // --- Key handlers & wake lock ---
   useEffect(() => {
     const handler = (e) => {
@@ -513,6 +549,7 @@ export default function App() {
     <>
       {/* SETUP */}
       <div className={`${screenClass('setup')} setup-screen`}>
+        <button className="setup-settings-btn btn btn-ghost" onClick={() => setShowSettings(true)}><IconSettings/></button>
         <div className="setup-container">
           <div className="setup-logo">
             <div className="setup-ball" />
@@ -640,6 +677,9 @@ export default function App() {
           )}
           {availableMembers.length < (tFormat === 'roundrobin' ? 6 : 4) && !(activeTournament && !activeTournament.finishedAt) && (
             <div className="teams-hint">Need at least {tFormat === 'roundrobin' ? 6 : 4} available players</div>
+          )}
+          {tournamentHistory.length > 0 && (
+            <button className="btn btn-ghost" style={{fontSize:12}} onClick={() => setShowPastTournaments(true)}><IconHistory/> Past Tournaments ({tournamentHistory.length})</button>
           )}
         </div>
       </div>
@@ -872,12 +912,13 @@ export default function App() {
         </div>
         {streak.count >= 3 && <div className="streak-banner">{streak.count} in a row!</div>}
         <div className="bottom-bar">
-          <button className="btn btn-ghost" onClick={undo}><IconUndo/> Undo</button>
+          <button className="btn btn-ghost" onClick={undo}><IconUndo/></button>
+          <button className="btn btn-ghost btn-stop-game" onClick={() => { if (confirm('Leave this match?')) { if (tournamentMatchId) { setTournamentMatchId(null); goTo('tournament'); } else { goSetup(); } } }}><IconStop/></button>
           <div className="game-info">
             <span className="game-timer">{formatDuration(elapsed)}</span>
-            {deuceCount > 0 && <> &bull; Deuce: {deuceCount}</>}
-            {voiceOn && <span className="voice-dot" title="Voice active"/>}
-            {liveOn && <span className="live-dot" title="Broadcasting"/>}
+            {deuceCount > 0 && <> &bull; {deuceCount}D</>}
+            {voiceOn && <span className="voice-dot"/>}
+            {liveCode && <span className="live-badge">LIVE {liveCode}</span>}
           </div>
           <button className="btn btn-ghost" onClick={() => goTo('history')}><IconHistory/></button>
         </div>
@@ -930,7 +971,7 @@ export default function App() {
               <div style={{fontSize:12}}>Start a game and it'll show up here</div>
             </div>
           ) : history.map((g,i) => (
-            <div key={g.id} className={`game-card ${!g.finished?'in-progress':''}`} style={{animationDelay:`${i*.05}s`}}>
+            <div key={g.id} className={`game-card ${!g.finished?'in-progress':''}`} style={{animationDelay:`${i*.05}s`}} onClick={() => g.finished && setDetailGame(g)}>
               <div className="game-card-header">
                 <span className="game-card-date">{fmtDate(g.startedAt)} &bull; {g.finishedAt?formatDuration(g.finishedAt-g.startedAt):g.updatedAt?formatDuration(g.updatedAt-g.startedAt):'\u2014'}</span>
                 <span className={`game-card-badge ${!g.finished?'badge-live':'badge-done'}`}>{!g.finished?'In Progress':'Finished'}</span>
@@ -942,7 +983,7 @@ export default function App() {
               </div>
               <div className="game-card-mode">{g.targetScore||'?'} pts &bull; serve every {g.serveInterval||'?'}{g.deuceCount > 0 && <> &bull; Deuces: {g.deuceCount}</>}</div>
               <div className="game-card-actions">
-                {!g.finished && <button className="btn btn-continue" onClick={() => continueGame(g)}>Continue from here</button>}
+                {!g.finished && <button className="btn btn-continue" onClick={e => { e.stopPropagation(); continueGame(g); }}>Continue</button>}
                 <button className="btn btn-delete" onClick={e => { e.stopPropagation(); deleteGame(g.id); }}><IconDelete/></button>
               </div>
             </div>
@@ -974,9 +1015,20 @@ export default function App() {
             <div><div className="setting-label">Voice Scoring</div><div className="setting-desc">Say "up"/"down" to score</div></div>
             <div className={`toggle ${voiceOn?'on':''}`} onClick={toggleVoice}/>
           </div>
-          <div className="setting-row">
-            <div><div className="setting-label">Live Broadcast</div><div className="setting-desc">Share scores to other tabs</div></div>
-            <div className={`toggle ${liveOn?'on':''}`} onClick={() => setLiveOn(l => !l)}/>
+          <div className="setting-row setting-row-live">
+            <div><div className="setting-label">Live Spectator</div><div className="setting-desc">P2P score sharing across devices</div></div>
+          </div>
+          <div className="live-controls">
+            {liveCode ? (
+              <div className="live-host-active">
+                <div className="live-room-code">{liveCode}</div>
+                <div className="live-room-label">Room Code &bull; {liveViewers} viewer{liveViewers!==1?'s':''}</div>
+                <button className="btn btn-outline btn-sm" onClick={stopHosting}>Stop Hosting</button>
+              </div>
+            ) : (
+              <button className="btn btn-primary btn-sm" onClick={startHosting}><IconLive/> Start Hosting</button>
+            )}
+            <button className="btn btn-outline btn-sm" onClick={() => { setShowSettings(false); setShowJoinModal(true); }}><IconLive/> Join Room</button>
           </div>
           <div className="setting-row setting-row-btns">
             <button className="btn btn-outline btn-export" onClick={handleExport}><IconDownload/> Export</button>
@@ -1003,6 +1055,113 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* GAME RESULT DETAIL MODAL */}
+      <div className={`modal-overlay ${detailGame?'show':''}`} onClick={e => { if (e.target===e.currentTarget) setDetailGame(null); }}>
+        {detailGame && (
+          <div className="modal detail-modal">
+            <div className="modal-handle"/>
+            <div className="detail-winner">{detailGame.winner ? (detailGame.winner==='a'?detailGame.teamA:detailGame.teamB)+' Wins!' : 'In Progress'}</div>
+            <div className="detail-score">
+              <span className={detailGame.winner==='a'?'detail-w':''}>{detailGame.scoreA}</span>
+              <span className="detail-sep">-</span>
+              <span className={detailGame.winner==='b'?'detail-w':''}>{detailGame.scoreB}</span>
+            </div>
+            <div className="detail-teams">
+              <span style={{color:'var(--a)',fontWeight:700}}>{detailGame.teamA}</span>
+              <span style={{color:'var(--dim)'}}>vs</span>
+              <span style={{color:'var(--b)',fontWeight:700}}>{detailGame.teamB}</span>
+            </div>
+            <div className="detail-info">
+              {detailGame.targetScore} pts &bull; serve every {detailGame.serveInterval}
+              {detailGame.deuceCount > 0 && <> &bull; {detailGame.deuceCount} deuce{detailGame.deuceCount>1?'s':''}</>}
+              <br/>{fmtDate(detailGame.startedAt)}
+              {detailGame.finishedAt && <> &bull; {formatDuration(detailGame.finishedAt - detailGame.startedAt)}</>}
+            </div>
+            <div className="detail-actions">
+              <button className="btn btn-primary" onClick={() => { shareGameResult(detailGame); }}><IconShare/> Share Result</button>
+              <button className="btn btn-outline" onClick={() => { deleteGame(detailGame.id); setDetailGame(null); }}><IconDelete/> Delete</button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* PAST TOURNAMENTS MODAL */}
+      <div className={`modal-overlay ${showPastTournaments?'show':''}`} onClick={e => { if (e.target===e.currentTarget) setShowPastTournaments(false); }}>
+        <div className="modal past-t-modal">
+          <div className="modal-handle"/>
+          <h3>Past Tournaments</h3>
+          {tournamentHistory.length === 0 ? (
+            <div className="teams-empty" style={{padding:'20px 0'}}>No completed tournaments yet</div>
+          ) : tournamentHistory.map((t, ti) => {
+            const st = calcStandings(t.pairs, t.matches);
+            const champ = t.currentChampion ? t.pairs.find(p => p.id === t.currentChampion) : (st.length > 0 ? t.pairs.find(p => p.id === st[0]?.pairId) : null);
+            return (
+              <div key={t.id} className="past-t-card" style={{animationDelay:`${ti*.05}s`}}>
+                <div className="past-t-header">
+                  <span className="past-t-date">{fmtDate(t.createdAt)}</span>
+                  <span className="past-t-format">{t.format === 'roundrobin' ? 'Round Robin' : 'King of Hill'}</span>
+                </div>
+                {champ && <div className="past-t-winner">&#x1F3C6; {champ.name}</div>}
+                <div className="past-t-stats">{t.matches.length} matches &bull; {t.pairs.length} teams &bull; {t.targetScore} pts</div>
+                {st.slice(0, 3).map((s, i) => (
+                  <div key={s.pairId} className="past-t-standing">
+                    <span className="past-t-rank">{i+1}.</span>
+                    <span className="past-t-name">{s.name}</span>
+                    <span className="past-t-wl">{s.won}W {s.lost}L</span>
+                  </div>
+                ))}
+              </div>
+            );
+          })}
+          <button className="btn btn-primary" style={{width:'100%',justifyContent:'center',marginTop:16,padding:14,fontSize:15}} onClick={() => setShowPastTournaments(false)}>Done</button>
+        </div>
+      </div>
+
+      {/* JOIN ROOM MODAL */}
+      <div className={`modal-overlay ${showJoinModal?'show':''}`} onClick={e => { if (e.target===e.currentTarget) setShowJoinModal(false); }}>
+        <div className="modal">
+          <div className="modal-handle"/>
+          <h3>Join Live Room</h3>
+          <div className="join-form">
+            <input className="join-input" value={joinCode} onChange={e => setJoinCode(e.target.value.replace(/\D/g,'').slice(0,4))} placeholder="4-digit code" maxLength={4} inputMode="numeric"/>
+            <button className="btn btn-primary" style={{width:'100%',justifyContent:'center',padding:14,fontSize:15,borderRadius:14}} onClick={joinAsSpectator} disabled={joinCode.length!==4}>Join Room</button>
+          </div>
+          <div className="join-hint">Enter the room code shown on the host device</div>
+        </div>
+      </div>
+
+      {/* SPECTATOR OVERLAY */}
+      {spectating && (
+        <div className="spectator-overlay">
+          <div className="spec-header">
+            <span className="spec-live-dot"/>
+            <span>LIVE</span>
+            <button className="btn btn-ghost btn-sm" onClick={leaveSpectator}>Leave</button>
+          </div>
+          <div className="spec-scoreboard">
+            <div className="spec-team spec-a">
+              <div className="spec-name">{spectating.teamA || 'Team A'}</div>
+              <div className="spec-score">{spectating.scoreA ?? 0}</div>
+              {spectating.serving === 'a' && <div className="spec-serve"/>}
+            </div>
+            <div className="spec-divider">
+              <div className="spec-vs">VS</div>
+            </div>
+            <div className="spec-team spec-b">
+              <div className="spec-name">{spectating.teamB || 'Team B'}</div>
+              <div className="spec-score">{spectating.scoreB ?? 0}</div>
+              {spectating.serving === 'b' && <div className="spec-serve"/>}
+            </div>
+          </div>
+          <div className="spec-info">
+            {spectating.target} pts
+            {spectating.deuceCount > 0 && <> &bull; Deuce: {spectating.deuceCount}</>}
+            {spectating.streak?.count >= 3 && <> &bull; {spectating.streak.count} in a row!</>}
+          </div>
+          {spectating.winner && <div className="spec-winner">{spectating.winner==='a'?spectating.teamA:spectating.teamB} Wins!</div>}
+        </div>
+      )}
 
       <canvas ref={confettiRef} className="confetti-canvas"/>
     </>
