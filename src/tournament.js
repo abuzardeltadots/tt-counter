@@ -61,6 +61,68 @@ export function createRoundRobinTournament(availableMembers, targetScore, serveI
   };
 }
 
+export function createKnockoutTournament(availableMembers, targetScore, serveInterval, balancedPairsFn) {
+  const result = balancedPairsFn
+    ? (() => { const { pairs: bp, standby } = balancedPairsFn(availableMembers); return { pairs: bp.map(([a, b]) => ({ id: genId(), players: [a, b], name: `${a.name} & ${b.name}` })), standby }; })()
+    : generatePairs(availableMembers);
+  // Seed bracket: first round matches
+  const round1 = [];
+  for (let i = 0; i < result.pairs.length; i += 2) {
+    if (i + 1 < result.pairs.length) {
+      round1.push({ id: genId(), pairAId: result.pairs[i].id, pairBId: result.pairs[i + 1].id, scoreA: 0, scoreB: 0, finished: false, winner: null, deuceCount: 0, round: 1 });
+    }
+  }
+  // Bye for odd pair count: last pair auto-advances
+  const byePair = result.pairs.length % 2 !== 0 ? result.pairs[result.pairs.length - 1].id : null;
+  return {
+    id: genId(),
+    format: 'knockout',
+    pairs: [...result.pairs],
+    matches: round1,
+    bracket: { rounds: [round1.map(m => m.id)], byePair },
+    targetScore,
+    serveInterval,
+    createdAt: Date.now(),
+    finishedAt: null
+  };
+}
+
+export function advanceKnockoutBracket(t) {
+  if (!t || t.format !== 'knockout') return t;
+  const currentRound = t.bracket.rounds[t.bracket.rounds.length - 1];
+  const currentMatches = currentRound.map(mid => t.matches.find(m => m.id === mid));
+  if (!currentMatches.every(m => m?.finished)) return t; // not all done yet
+
+  // Collect winners + current bye (always include bye regardless of round)
+  const winners = currentMatches.map(m => m.winner);
+  if (t.bracket.byePair) winners.push(t.bracket.byePair);
+
+  if (winners.length <= 1) {
+    // Tournament over — last winner is champion
+    return { ...t, finishedAt: Date.now(), currentChampion: winners[0] || null };
+  }
+
+  // Create next round matches
+  const nextRound = [];
+  for (let i = 0; i < winners.length; i += 2) {
+    if (i + 1 < winners.length) {
+      const m = { id: genId(), pairAId: winners[i], pairBId: winners[i + 1], scoreA: 0, scoreB: 0, finished: false, winner: null, deuceCount: 0, round: t.bracket.rounds.length + 1 };
+      nextRound.push(m);
+    }
+  }
+  // Bye for odd winners
+  const newBye = winners.length % 2 !== 0 ? winners[winners.length - 1] : null;
+  return {
+    ...t,
+    matches: [...t.matches, ...nextRound],
+    bracket: {
+      ...t.bracket,
+      rounds: [...t.bracket.rounds, nextRound.map(m => m.id)],
+      byePair: newBye
+    }
+  };
+}
+
 export function getNextMatch(t) {
   if (!t || t.pendingPick || t.finishedAt) return null;
   if (!t.currentChampion) {

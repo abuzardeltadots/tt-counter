@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npx vite:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(wc -l /c/Users/hp/Desktop/tt-counter-react/src/context/AppContext.jsx /c/Users/hp/Desktop/tt-counter-react/src/components/*.jsx)",
+      "Bash(npx vitest:*)"
     ]
   }
 }

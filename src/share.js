@@ -171,3 +171,107 @@ export async function shareResultsImage(tournament, standings, championPair) {
   URL.revokeObjectURL(url);
   return 'downloaded';
 }
+
+// --- Tournament invite link ---
+export function createInviteUrl(members, targetScore, serveInterval, format) {
+  const data = { v: 1, type: 'invite', m: members, ts: targetScore, si: serveInterval, f: format };
+  const json = JSON.stringify(data);
+  const encoded = btoa(unescape(encodeURIComponent(json)));
+  return `${window.location.origin}${window.location.pathname}#invite=${encoded}`;
+}
+
+export function parseInviteHash() {
+  const hash = window.location.hash;
+  if (!hash.startsWith('#invite=')) return null;
+  try {
+    const encoded = hash.slice(8);
+    const json = decodeURIComponent(escape(atob(encoded)));
+    return JSON.parse(json);
+  } catch { return null; }
+}
+
+// --- Weekly Digest Image ---
+export function renderDigestCard(playerStats, recentMatches, eloChanges) {
+  const W = 720, pad = 32;
+  const topPlayers = playerStats.slice(0, 5);
+  const H = 280 + topPlayers.length * 34 + Math.min(recentMatches.length, 5) * 28;
+
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  const font = (w, s) => `${w} ${s}px system-ui, -apple-system, sans-serif`;
+
+  // Background
+  ctx.fillStyle = '#0a0a1a'; ctx.fillRect(0, 0, W, H);
+  const grad = ctx.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, '#ff6b35'); grad.addColorStop(1, '#00d4ff');
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, W, 4);
+
+  let y = 44;
+  ctx.fillStyle = '#ffd700'; ctx.font = font('900', 24); ctx.textAlign = 'center';
+  ctx.fillText('WEEKLY DIGEST', W / 2, y); y += 30;
+  ctx.fillStyle = '#666680'; ctx.font = font('600', 13);
+  ctx.fillText(`${recentMatches.length} matches this week`, W / 2, y); y += 28;
+
+  // Divider
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - pad, y); ctx.stroke(); y += 20;
+
+  // Top players
+  ctx.fillStyle = '#666680'; ctx.font = font('700', 11); ctx.textAlign = 'left';
+  ctx.fillText('TOP PLAYERS', pad, y); y += 20;
+
+  topPlayers.forEach((ps, i) => {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = i === 0 ? '#ffd700' : '#e8e8f0'; ctx.font = font('700', 14);
+    ctx.fillText(`${i + 1}. ${ps.name}`, pad, y);
+    ctx.textAlign = 'right'; ctx.font = font('800', 14);
+    ctx.fillStyle = '#ff6b35';
+    ctx.fillText(`${ps.won}W ${ps.lost}L`, W - pad, y);
+    y += 34;
+  });
+
+  // Divider
+  y += 4;
+  ctx.beginPath(); ctx.moveTo(pad, y); ctx.lineTo(W - pad, y); ctx.stroke(); y += 20;
+
+  // Recent matches
+  ctx.fillStyle = '#666680'; ctx.font = font('700', 11); ctx.textAlign = 'left';
+  ctx.fillText('RECENT MATCHES', pad, y); y += 18;
+
+  recentMatches.slice(0, 5).forEach(m => {
+    ctx.textAlign = 'left'; ctx.fillStyle = '#e8e8f0'; ctx.font = font('600', 12);
+    ctx.fillText(m.teamA || '?', pad, y);
+    ctx.textAlign = 'center'; ctx.font = font('800', 13);
+    ctx.fillText(`${m.scoreA} - ${m.scoreB}`, W / 2, y);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#e8e8f0'; ctx.font = font('600', 12);
+    ctx.fillText(m.teamB || '?', W - pad, y);
+    y += 28;
+  });
+
+  // Footer
+  y += 12;
+  ctx.fillStyle = '#666680'; ctx.font = font('600', 11); ctx.textAlign = 'center';
+  ctx.fillText('TT Counter', W / 2, y);
+
+  return c;
+}
+
+export async function shareDigestImage(playerStats, recentMatches) {
+  const canvas = renderDigestCard(playerStats, recentMatches, {});
+  const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
+
+  if (navigator.share && navigator.canShare) {
+    const file = new File([blob], 'weekly-digest.png', { type: 'image/png' });
+    if (navigator.canShare({ files: [file] })) {
+      try { await navigator.share({ title: 'Weekly Digest', text: 'TT Counter Weekly Digest', files: [file] }); return true; }
+      catch {}
+    }
+  }
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'weekly-digest.png';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  return 'downloaded';
+}

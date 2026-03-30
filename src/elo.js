@@ -45,3 +45,28 @@ export function getH2H(playerIdsA, playerIdsB, tournaments) {
   });
   return { a, b };
 }
+
+// Detailed H2H between two individual players
+export function getDetailedH2H(playerIdA, playerIdB, tournaments) {
+  const matches = [];
+  tournaments.forEach(t => {
+    t.matches.filter(m => m.finished).forEach(m => {
+      const pA = t.pairs.find(p => p.id === m.pairAId);
+      const pB = t.pairs.find(p => p.id === m.pairBId);
+      if (!pA || !pB) return;
+      const aInTeamA = pA.players.some(p => p.id === playerIdA);
+      const aInTeamB = pB.players.some(p => p.id === playerIdA);
+      const bInTeamA = pA.players.some(p => p.id === playerIdB);
+      const bInTeamB = pB.players.some(p => p.id === playerIdB);
+      const areOpponents = (aInTeamA && bInTeamB) || (aInTeamB && bInTeamA);
+      if (!areOpponents) return;
+      const aWon = (aInTeamA && m.winner === m.pairAId) || (aInTeamB && m.winner === m.pairBId);
+      matches.push({ scoreA: aInTeamA ? m.scoreA : m.scoreB, scoreB: aInTeamA ? m.scoreB : m.scoreA, aWon, date: t.createdAt });
+    });
+  });
+  const aWins = matches.filter(m => m.aWon).length;
+  const bWins = matches.length - aWins;
+  const avgPF = matches.length ? Math.round(matches.reduce((s, m) => s + m.scoreA, 0) / matches.length) : 0;
+  const avgPA = matches.length ? Math.round(matches.reduce((s, m) => s + m.scoreB, 0) / matches.length) : 0;
+  return { matches, aWins, bWins, total: matches.length, avgPF, avgPA };
+}
