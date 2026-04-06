@@ -1,11 +1,29 @@
 const genId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
-export function generatePairs(availableMembers) {
-  const shuffled = [...availableMembers];
-  for (let i = shuffled.length - 1; i > 0; i--) {
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    [a[i], a[j]] = [a[j], a[i]];
   }
+  return a;
+}
+
+export function generatePairs(availableMembers) {
+  // Members arrive sorted by priority (tap order).
+  // Last odd player = standby. Rest are paired.
+  // Shuffle within groups of 4 to randomize pairings but keep priority tiers.
+  // Group 1 (indices 0-3) = first match, Group 2 (4-7) = queue, etc.
+  const standby = availableMembers.length % 2 !== 0 ? availableMembers[availableMembers.length - 1] : null;
+  const playable = standby ? availableMembers.slice(0, -1) : [...availableMembers];
+
+  // Shuffle within groups of 4 (each group produces 2 pairs)
+  const shuffled = [];
+  for (let i = 0; i < playable.length; i += 4) {
+    const group = playable.slice(i, Math.min(i + 4, playable.length));
+    shuffled.push(...shuffle(group));
+  }
+
   const pairs = [];
   for (let i = 0; i + 1 < shuffled.length; i += 2) {
     pairs.push({
@@ -14,7 +32,6 @@ export function generatePairs(availableMembers) {
       name: `${shuffled[i].name} & ${shuffled[i + 1].name}`
     });
   }
-  const standby = shuffled.length % 2 !== 0 ? shuffled[shuffled.length - 1] : null;
   return { pairs, standby };
 }
 

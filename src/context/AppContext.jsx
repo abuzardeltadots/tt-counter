@@ -53,7 +53,7 @@ export default function AppProvider({ children }) {
   const [memberAvail, setMemberAvail] = useState(() => {
     const m = loadMembers();
     const a = {};
-    m.forEach(mb => { a[mb.id] = true; });
+    m.forEach(mb => { a[mb.id] = false; });
     return a;
   });
   const [newMemberName, setNewMemberName] = useState('');
@@ -125,7 +125,13 @@ export default function AppProvider({ children }) {
   const playerStats = useMemo(() => calcPlayerStats(members, allTournaments), [members, allTournaments]);
 
   const maxWins = standings.length > 0 ? Math.max(...standings.map(s => s.won), 1) : 1;
-  const availableMembers = members.filter(m => memberAvail[m.id] !== false);
+  const availableMembers = members
+    .filter(m => memberAvail[m.id] !== false && memberAvail[m.id] !== undefined)
+    .sort((a, b) => {
+      const pa = typeof memberAvail[a.id] === 'number' ? memberAvail[a.id] : 9999;
+      const pb = typeof memberAvail[b.id] === 'number' ? memberAvail[b.id] : 9999;
+      return pa - pb;
+    });
 
   // --- Confetti on dopamine winner ---
   const didCelebrate = useRef(null);
@@ -296,7 +302,7 @@ export default function AppProvider({ children }) {
     if (!name) return;
     const id = genId();
     setMembers(prev => { const n = [...prev, { id, name }]; saveMembers(n); return n; });
-    setMemberAvail(prev => ({ ...prev, [id]: true }));
+    setMemberAvail(prev => ({ ...prev, [id]: false }));
     setNewMemberName('');
   }, [newMemberName]);
 
@@ -309,7 +315,31 @@ export default function AppProvider({ children }) {
   const toggleAvail = useCallback((id) => {
     // Only block during tournament with active matches (not just created/finished)
     if (activeTournament && !activeTournament.finishedAt && activeTournament.matches?.length > 0) return;
-    setMemberAvail(prev => ({ ...prev, [id]: prev[id] === false ? true : false }));
+    setMemberAvail(prev => {
+      if (prev[id] !== false && prev[id] !== undefined && prev[id] !== true) {
+        // Already has a priority number — uncheck it, shift others down
+        const removedPriority = prev[id];
+        const next = { ...prev, [id]: false };
+        Object.keys(next).forEach(k => { if (typeof next[k] === 'number' && next[k] > removedPriority) next[k]--; });
+        return next;
+      }
+      if (prev[id] === false) {
+        // Unchecked → assign next priority number
+        const maxPriority = Math.max(0, ...Object.values(prev).filter(v => typeof v === 'number'));
+        return { ...prev, [id]: maxPriority + 1 };
+      }
+      // true or undefined → uncheck
+      return { ...prev, [id]: false };
+    });
+  }, [activeTournament]);
+
+  const uncheckAll = useCallback(() => {
+    if (activeTournament && !activeTournament.finishedAt && activeTournament.matches?.length > 0) return;
+    setMemberAvail(prev => {
+      const next = {};
+      Object.keys(prev).forEach(k => { next[k] = false; });
+      return next;
+    });
   }, [activeTournament]);
 
   // --- Generate pairs & start tournament ---
@@ -453,7 +483,7 @@ export default function AppProvider({ children }) {
         // Update React state from imported data
         if (d.history) setHistory(d.history);
         if (d.settings) setSettings(prev => ({ ...prev, ...d.settings }));
-        if (d.members) { setMembers(d.members); const a = {}; d.members.forEach(m => { a[m.id] = true; }); setMemberAvail(a); }
+        if (d.members) { setMembers(d.members); const a = {}; d.members.forEach(m => { a[m.id] = false; }); setMemberAvail(a); }
         if (d.activeTournament) setActiveTournament(d.activeTournament);
         if (d.tournamentHistory) setTournamentHistory(d.tournamentHistory);
         if (d.seasons) setSeasons(d.seasons);
@@ -471,7 +501,7 @@ export default function AppProvider({ children }) {
     if (data && data.t) { setSyncData(data); clearSyncHash(); }
     const invite = parseInviteHash();
     if (invite && invite.type === 'invite') {
-      if (invite.m) { setMembers(invite.m); saveMembers(invite.m); const a = {}; invite.m.forEach(mb => { a[mb.id] = true; }); setMemberAvail(a); }
+      if (invite.m) { setMembers(invite.m); saveMembers(invite.m); const a = {}; invite.m.forEach(mb => { a[mb.id] = false; }); setMemberAvail(a); }
       if (invite.ts) setTSetupTarget(invite.ts);
       if (invite.si) setTSetupServe(invite.si);
       if (invite.f) setTFormat(invite.f);
@@ -483,7 +513,7 @@ export default function AppProvider({ children }) {
   const handleSyncImport = useCallback(() => {
     if (!syncData) return;
     if (!validateSyncData(syncData)) { setSyncData(null); return; }
-    if (syncData.m) { setMembers(syncData.m); saveMembers(syncData.m); const a = {}; syncData.m.forEach(mb => { a[mb.id] = true; }); setMemberAvail(a); }
+    if (syncData.m) { setMembers(syncData.m); saveMembers(syncData.m); const a = {}; syncData.m.forEach(mb => { a[mb.id] = false; }); setMemberAvail(a); }
     if (syncData.t) { setActiveTournament(syncData.t); saveActiveTournament(syncData.t); }
     setSyncData(null);
     goTo('tournament');
@@ -573,7 +603,7 @@ export default function AppProvider({ children }) {
 
     // Callbacks
     goTo, screenClass, autoSave, addPoint, undo, startGame, continueGame,
-    deleteGame, goSetup, quickRematch, addMember, deleteMember, toggleAvail,
+    deleteGame, goSetup, quickRematch, addMember, deleteMember, toggleAvail, uncheckAll,
     generateAndStart, playNextMatch, handleStandbyPick, backToTournament,
     endTournament, finishAndArchive, discardTournament, startRRMatch,
     endRRTournament, handleExport, handleImport, handleSyncImport,

@@ -27,7 +27,7 @@ export default function TeamsScreen() {
   const [h2hSelect, setH2hSelect] = useState(null);
   const {
     screenClass, goTo, members, memberAvail, newMemberName, setNewMemberName,
-    addMember, deleteMember, toggleAvail, activeTournament,
+    addMember, deleteMember, toggleAvail, uncheckAll, activeTournament,
     tSetupTarget, setTSetupTarget, tSetupServe, setTSetupServe,
     tFormat, setTFormat, balanceElo, setBalanceElo,
     availableMembers, generateAndStart, playerStats, allTournaments,
@@ -56,16 +56,36 @@ export default function TeamsScreen() {
           <button className="btn btn-primary teams-add-btn" onClick={addMember}><IconPlus/></button>
         </div>
 
+        {members.length > 0 && (
+          <div className="teams-list-header">
+            <span className="teams-list-count">{availableMembers.length} selected</span>
+            <button className="btn btn-ghost btn-uncheck" onClick={uncheckAll}>Uncheck All</button>
+          </div>
+        )}
         <div className="teams-list">
           {members.length === 0 ? (
             <div className="teams-empty">Add players to get started</div>
-          ) : members.map((m, i) => (
-            <div key={m.id} className={`member-card ${memberAvail[m.id] !== false ? '' : 'unavailable'}`} style={{animationDelay:`${i*.04}s`}}>
-              <div className={`member-check ${memberAvail[m.id] !== false ? 'checked' : ''}`} onClick={() => toggleAvail(m.id)}>
-                {memberAvail[m.id] !== false && <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>}
+          ) : members.map((m, i) => {
+            const pri = memberAvail[m.id];
+            const isChecked = pri !== false && pri !== undefined;
+            const priNum = typeof pri === 'number' ? pri : null;
+            // Role based on priority: first 4 = match, next pairs = queue, last odd = standby
+            let role = null;
+            if (priNum && availableMembers.length > 0) {
+              const total = availableMembers.length;
+              const isOdd = total % 2 !== 0;
+              if (isOdd && priNum === total) role = 'standby';
+              else if (priNum <= 4) role = 'match';
+              else role = 'queue';
+            }
+            return (
+            <div key={m.id} className={`member-card ${isChecked ? '' : 'unavailable'}`} style={{animationDelay:`${i*.04}s`}}>
+              <div className={`member-check ${isChecked ? 'checked' : ''}`} onClick={() => toggleAvail(m.id)}>
+                {isChecked && (priNum ? <span className="check-num">{priNum}</span> : <svg viewBox="0 0 24 24"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>)}
               </div>
               <span className="member-avatar" style={{background: PLAYER_COLORS[i % PLAYER_COLORS.length]}}/>
               <span className="member-name">{m.name}</span>
+              {role && <span className={`member-role role-${role}`}>{role === 'match' ? 'Match 1' : role === 'queue' ? 'Queue' : 'Standby'}</span>}
               <span className="member-elo">
                 {getElo(m.id)}
                 {(() => { const t = eloTrend(m.id, allTournaments); return t === 1 ? <span className="elo-up"/> : t === -1 ? <span className="elo-down"/> : null; })()}
@@ -73,7 +93,8 @@ export default function TeamsScreen() {
               {getPlayerBadges(m.id).length > 0 && <span className="member-badges">{getPlayerBadges(m.id).length}</span>}
               <button className="btn btn-delete-sm" onClick={() => deleteMember(m.id)}><IconDelete/></button>
             </div>
-          ))}
+            );
+          })}
         </div>
 
         {members.length >= 4 && (
